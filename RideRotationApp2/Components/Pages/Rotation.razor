@@ -143,7 +143,7 @@
         <br />
         - 1 breaker: one breaker rotation line
         <br />
-        - 2 breakers: two breaker rotation lines
+        - 2 breakers: two breaker rotation lines, preferably about 4 rides each
     </p>
 
     <h3>Next Shift Training Count</h3>
@@ -314,61 +314,112 @@
             .Select((breaker, index) => $"Breaker {index + 1}")
             .ToList();
 
-        var automaticLines = BuildAutomaticRotationLines(ridePositions, breakerPositions);
+        var possibleLineSets = BuildPossibleAutomaticRotationLineSets(ridePositions, breakerPositions);
 
-        var allMoves = new List<NextShiftMove>();
-        var nextSnapshot = new ShiftSnapshot();
-
-        int trainingsRemaining = nextShiftTrainingCount;
-
-        foreach (var line in automaticLines)
+        foreach (var lineSet in possibleLineSets)
         {
-            bool lineWorked = TryBuildBestLineMoves(
-                line,
-                currentSnapshot,
-                nextSnapshot,
-                allMoves,
-                ref trainingsRemaining);
+            var allMoves = new List<NextShiftMove>();
+            var nextSnapshot = new ShiftSnapshot();
+            int trainingsRemaining = nextShiftTrainingCount;
 
-            if (!lineWorked)
+            bool lineSetWorked = true;
+
+            foreach (var line in lineSet)
             {
-                nextShiftWarnings.Add($"Could not create a valid next-shift line for: {string.Join(", ", line)}");
+                bool lineWorked = TryBuildBestLineMoves(
+                    line,
+                    currentSnapshot,
+                    nextSnapshot,
+                    allMoves,
+                    ref trainingsRemaining);
+
+                if (!lineWorked)
+                {
+                    lineSetWorked = false;
+                    break;
+                }
+            }
+
+            if (lineSetWorked)
+            {
+                nextShifts.Add(allMoves);
+                shiftSnapshots.Add(nextSnapshot);
+
+                message = $"Generated Shift {nextShifts.Count + 1}.";
+                return;
             }
         }
 
-        if (nextShiftWarnings.Count > 0)
-        {
-            message = "Next shift has warnings. It could not find a valid automatic rotation.";
-            return;
-        }
-
-        nextShifts.Add(allMoves);
-        shiftSnapshots.Add(nextSnapshot);
-
-        message = $"Generated Shift {nextShifts.Count + 1}.";
+        nextShiftWarnings.Add("Could not create a valid next shift with the current breaker setup, certifications, and training count.");
+        message = "Next shift could not be generated.";
     }
 
-    private List<List<string>> BuildAutomaticRotationLines(
+    private List<List<List<string>>> BuildPossibleAutomaticRotationLineSets(
         List<string> ridePositions,
         List<string> breakerPositions)
     {
-        var lines = new List<List<string>>();
+        var lineSets = new List<List<List<string>>>();
+
+        if (ridePositions.Count == 0)
+            return lineSets;
 
         if (breakerPositions.Count == 0)
         {
-            lines.Add(ridePositions);
-            return lines;
+            lineSets.Add(new List<List<string>>
+            {
+                ridePositions.ToList()
+            });
+
+            return lineSets;
         }
 
         if (breakerPositions.Count == 1)
         {
-            var line = new List<string> { breakerPositions[0] };
-            line.AddRange(ridePositions);
-            lines.Add(line);
-            return lines;
+            lineSets.Add(new List<List<string>>
+            {
+                new List<string> { breakerPositions[0] }
+                    .Concat(ridePositions)
+                    .ToList()
+            });
+
+            return lineSets;
         }
 
+        // For 2+ breakers, try to split rides into groups.
+        // The preferred setup is about 4 rides per breaker.
         int breakerCount = breakerPositions.Count;
+
+        if (breakerCount == 2)
+        {
+            foreach (var firstGroup in GetRideGroupsNearTargetSize(ridePositions, 4))
+            {
+                var secondGroup = ridePositions
+                    .Where(r => !firstGroup.Contains(r))
+                    .ToList();
+
+                if (secondGroup.Count == 0)
+                    continue;
+
+                var lineSet = new List<List<string>>
+                {
+                    new List<string> { breakerPositions[0] }.Concat(firstGroup).ToList(),
+                    new List<string> { breakerPositions[1] }.Concat(secondGroup).ToList()
+                };
+
+                lineSets.Add(lineSet);
+
+                // Also try swapped breaker assignment.
+                lineSets.Add(new List<List<string>>
+                {
+                    new List<string> { breakerPositions[0] }.Concat(secondGroup).ToList(),
+                    new List<string> { breakerPositions[1] }.Concat(firstGroup).ToList()
+                });
+            }
+
+            return lineSets;
+        }
+
+        // If more than 2 breakers, distribute rides round-robin as a fallback.
         var groups = new List<List<string>>();
 
         for (int i = 0; i < breakerCount; i++)
@@ -382,8 +433,61 @@
             groups[groupIndex].Add(ridePositions[i]);
         }
 
-        lines.AddRange(groups);
-        return lines;
+        lineSets.Add(groups);
+
+        return lineSets;
+    }
+
+    private List<List<string>> GetRideGroupsNearTargetSize(List<string> ridesToSplit, int targetSize)
+    {
+        var groups = new List<List<string>>();
+
+        int minSize = Math.Max(1, targetSize - 1);
+        int maxSize = Math.Min(ridesToSplit.Count - 1, targetSize + 1);
+
+        for (int size = minSize; size <= maxSize; size++)
+        {
+            BuildCombinations(
+                ridesToSplit,
+                size,
+                0,
+                new List<string>(),
+                groups);
+        }
+
+        // Prefer groups closest to target size first.
+        return groups
+            .OrderBy(g => Math.Abs(g.Count - targetSize))
+            .ThenBy(g => string.Join(",", g))
+            .ToList();
+    }
+
+    private void BuildCombinations(
+        List<string> source,
+        int size,
+        int startIndex,
+        List<string> current,
+        List<List<string>> results)
+    {
+        if (current.Count == size)
+        {
+            results.Add(current.ToList());
+            return;
+        }
+
+        for (int i = startIndex; i < source.Count; i++)
+        {
+            current.Add(source[i]);
+
+            BuildCombinations(
+                source,
+                size,
+                i + 1,
+                current,
+                results);
+
+            current.RemoveAt(current.Count - 1);
+        }
     }
 
     private bool TryBuildBestLineMoves(
@@ -400,7 +504,7 @@
         if (positionsInLine.Count < 2)
             return false;
 
-        var possibleOrders = GetPositionPermutations(positionsInLine);
+        var possibleOrders = GetPositionPermutations(positionsInLine, maxResults: 5000);
 
         foreach (var order in possibleOrders)
         {
@@ -477,12 +581,15 @@
         return false;
     }
 
-    private List<List<string>> GetPositionPermutations(List<string> positions)
+    private List<List<string>> GetPositionPermutations(List<string> positions, int maxResults)
     {
         var results = new List<List<string>>();
 
         void Backtrack(List<string> current, List<string> remaining)
         {
+            if (results.Count >= maxResults)
+                return;
+
             if (remaining.Count == 0)
             {
                 results.Add(current.ToList());
