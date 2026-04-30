@@ -29,78 +29,148 @@ public class RotationService
         List<int> cannotBeBreakerEmployeeIds)
     {
         var result = new RotationGenerationResult();
-        var usedEmployeeIds = new HashSet<int>();
 
         var recentAssignments = await _db.RotationAssignments
             .OrderByDescending(a => a.AssignedAt)
             .ToListAsync();
 
-        const int memoryCount = 3;
+        var normalAssignments = GenerateNormalAssignmentsWithBacktracking(
+            employees,
+            rides,
+            recentAssignments);
 
-        var remainingRides = rides.ToList();
-
-        while (remainingRides.Count > 0)
+        if (normalAssignments.Count != rides.Count)
         {
-            var rideToAssign = remainingRides
-                .OrderBy(ride => employees.Count(employee =>
-                    !usedEmployeeIds.Contains(employee.Id) &&
-                    IsCertified(employee, ride)))
-                .First();
-
-            var candidates = employees
-                .Where(employee =>
-                    !usedEmployeeIds.Contains(employee.Id) &&
-                    IsCertified(employee, rideToAssign))
-                .ToList();
-
-            if (candidates.Count == 0)
-            {
-                result.Warnings.Add($"{rideToAssign.Name} could not be assigned.");
-                remainingRides.Remove(rideToAssign);
-                continue;
-            }
-
-            Employee? chosen = candidates.FirstOrDefault(employee =>
-            {
-                var recentRideIds = recentAssignments
-                    .Where(a => a.EmployeeId == employee.Id)
-                    .Take(memoryCount)
-                    .Select(a => a.RideId)
-                    .ToList();
-
-                return !recentRideIds.Contains(rideToAssign.Id);
-            });
-
-            chosen ??= candidates.First();
-
-            result.Assignments.Add(new RotationResultItem
-            {
-                Ride = rideToAssign,
-                Employee = chosen,
-                IsTraining = false
-            });
-
-            usedEmployeeIds.Add(chosen.Id);
-            remainingRides.Remove(rideToAssign);
+            result.Warnings.Add("Could not find a complete rotation for all selected rides.");
+            return result;
         }
 
-        int trainingsAdded = TryAddTrainings(result.Assignments, employees, rides, trainingCount);
+        result.Assignments.AddRange(normalAssignments);
+
+        int trainingsAdded = TryAddTrainings(
+            result.Assignments,
+            employees,
+            rides,
+            trainingCount);
 
         if (trainingsAdded < trainingCount)
         {
             result.Warnings.Add($"Only added {trainingsAdded} out of {trainingCount} trainings.");
         }
 
-        AddBreakers(result, employees, rides, breakerCount, cannotBeBreakerEmployeeIds);
+        AddBreakers(
+            result,
+            employees,
+            rides,
+            breakerCount,
+            cannotBeBreakerEmployeeIds);
 
         return result;
     }
 
+    private List<RotationResultItem> GenerateNormalAssignmentsWithBacktracking(
+        List<Employee> employees,
+        List<Ride> rides,
+        List<RotationAssignment> recentAssignments)
+    {
+        var assignments = new List<RotationResultItem>();
+        var usedEmployeeIds = new HashSet<int>();
+
+        var ridesByDifficulty = rides
+            .OrderBy(ride => employees.Count(employee => IsCertified(employee, ride)))
+            .ToList();
+
+        bool success = TryAssignRide(
+            0,
+            ridesByDifficulty,
+            employees,
+            recentAssignments,
+            assignments,
+            usedEmployeeIds);
+
+        if (!success)
+        {
+            return new List<RotationResultItem>();
+        }
+
+        return assignments;
+    }
+
+    private bool TryAssignRide(
+        int rideIndex,
+        List<Ride> rides,
+        List<Employee> employees,
+        List<RotationAssignment> recentAssignments,
+        List<RotationResultItem> assignments,
+        HashSet<int> usedEmployeeIds)
+    {
+        if (rideIndex >= rides.Count)
+        {
+            return true;
+        }
+
+        var ride = rides[rideIndex];
+
+        var candidates = employees
+            .Where(employee =>
+                !usedEmployeeIds.Contains(employee.Id) &&
+                IsCertified(employee, ride))
+            .OrderBy(employee => RecentRidePenalty(employee, ride, recentAssignments))
+            .ThenBy(employee => employee.Certifications.Count(c => c.IsCertified))
+            .ToList();
+
+        foreach (var candidate in candidates)
+        {
+            assignments.Add(new RotationResultItem
+            {
+                Ride = ride,
+                Employee = candidate,
+                IsTraining = false
+            });
+
+            usedEmployeeIds.Add(candidate.Id);
+
+            bool worked = TryAssignRide(
+                rideIndex + 1,
+                rides,
+                employees,
+                recentAssignments,
+                assignments,
+                usedEmployeeIds);
+
+            if (worked)
+            {
+                return true;
+            }
+
+            assignments.RemoveAt(assignments.Count - 1);
+            usedEmployeeIds.Remove(candidate.Id);
+        }
+
+        return false;
+    }
+
+    private int RecentRidePenalty(
+        Employee employee,
+        Ride ride,
+        List<RotationAssignment> recentAssignments)
+    {
+        const int memoryCount = 3;
+
+        var recentRideIds = recentAssignments
+            .Where(a => a.EmployeeId == employee.Id)
+            .Take(memoryCount)
+            .Select(a => a.RideId)
+            .ToList();
+
+        return recentRideIds.Contains(ride.Id) ? 10 : 0;
+    }
+
     private int TryAddTrainings(
-    List<RotationResultItem> assignments,
-    List<Employee> employees,
-    List<Ride> rides,
-    int trainingCount)
+        List<RotationResultItem> assignments,
+        List<Employee> employees,
+        List<Ride> rides,
+        int trainingCount)
     {
         int trainingsAdded = 0;
 
@@ -127,9 +197,6 @@ public class RotationService
 
             foreach (var trainingRide in possibleTrainingRides)
             {
-                if (trainingsAdded >= trainingCount)
-                    break;
-
                 var personCurrentlyOnTrainingRide = assignments
                     .FirstOrDefault(a => a.Ride.Id == trainingRide.Id && !a.IsTraining);
 
@@ -226,6 +293,7 @@ public class RotationService
 
         await _db.SaveChangesAsync();
     }
+
     private bool CanTrainOnRide(Employee employee, Ride ride)
     {
         if (ride.PrerequisiteRideId == null)
@@ -235,6 +303,7 @@ public class RotationService
             cert.RideId == ride.PrerequisiteRideId &&
             cert.IsCertified);
     }
+
     private bool IsCertified(Employee employee, Ride ride)
     {
         return employee.Certifications.Any(cert =>
