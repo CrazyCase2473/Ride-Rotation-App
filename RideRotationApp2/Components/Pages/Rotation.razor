@@ -1,0 +1,193 @@
+﻿@page "/rotation"
+@rendermode InteractiveServer
+
+@using Microsoft.EntityFrameworkCore
+@using RideRotationApp2.Data
+@using RideRotationApp2.Models
+@using RideRotationApp2.Services
+
+@inject AppDbContext Db
+@inject RotationService RotationService
+
+<h1>Rotation Builder</h1>
+
+<p>@message</p>
+
+@if (currentResult.Warnings.Count > 0)
+{
+    <div style="border:1px solid red; padding:10px; margin:10px 0;">
+        <strong>Warnings</strong>
+
+        @foreach (var warning in currentResult.Warnings)
+        {
+            <div>@warning</div>
+        }
+    </div>
+}
+
+<h3>Training Count</h3>
+<input type="number" @bind="trainingCount" min="0" />
+
+<h3>Breaker Count</h3>
+<input type="number" @bind="breakerCount" min="0" />
+
+<h3>Working Today</h3>
+@foreach (var employee in employees)
+{
+    <label style="display:block;">
+        <input type="checkbox" @bind="selectedEmployeeIds[employee.Id]" />
+        @employee.Name (@employee.Area)
+    </label>
+}
+
+<h3>Can't Be Breaker</h3>
+@foreach (var employee in employees)
+{
+    <label style="display:block;">
+        <input type="checkbox" @bind="cannotBeBreakerIds[employee.Id]" />
+        @employee.Name
+    </label>
+}
+
+<h3>Open Rides</h3>
+@foreach (var ride in rides)
+{
+    <label style="display:block;">
+        <input type="checkbox" @bind="selectedRideIds[ride.Id]" />
+        @ride.Name
+    </label>
+}
+
+<br />
+
+<button @onclick="GenerateRotation">Generate Rotation</button>
+<button @onclick="ResetRotation">Reset</button>
+
+@if (currentResult.Assignments.Count > 0)
+{
+    <h2>Generated Rotation</h2>
+
+    @foreach (var item in currentResult.Assignments)
+    {
+        <div style="border:1px solid #ccc; padding:10px; margin:8px 0;">
+            <strong>@item.Ride.Name</strong>
+            <br />
+            @item.Employee.Name
+
+            @if (item.IsTraining)
+            {
+                <span> (Training)</span>
+            }
+        </div>
+    }
+
+    @if (currentResult.Breakers.Count > 0)
+    {
+        <h2>Breakers</h2>
+
+        @foreach (var breaker in currentResult.Breakers)
+        {
+            <div style="border:1px solid #aaa; padding:10px; margin:8px 0;">
+                <strong>Breaker</strong>
+                <br />
+                @breaker.Name
+
+                <div>
+                    Covers:
+                    @{
+                        var coverage = currentResult.BreakerCoverage.GetValueOrDefault(breaker.Id, new List<Ride>());
+                    }
+
+                    @if (coverage.Count == 0)
+                    {
+                        <span>None</span>
+                    }
+                    else
+                    {
+                        <span>@string.Join(", ", coverage.Select(r => r.Name))</span>
+                    }
+                </div>
+            </div>
+        }
+    }
+
+    <button @onclick="SaveRotation">Save Rotation</button>
+}
+
+@code {
+    private string message = "Select employees and rides.";
+
+    private List<Employee> employees = new();
+    private List<Ride> rides = new();
+
+    private Dictionary<int, bool> selectedEmployeeIds = new();
+    private Dictionary<int, bool> selectedRideIds = new();
+    private Dictionary<int, bool> cannotBeBreakerIds = new();
+
+    private RotationGenerationResult currentResult = new();
+
+    private int trainingCount = 0;
+    private int breakerCount = 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        employees = await Db.Employees
+            .Include(e => e.Certifications)
+            .ThenInclude(c => c.Ride)
+            .OrderBy(e => e.Name)
+            .ToListAsync();
+
+        rides = await Db.Rides
+        .Include(r => r.PrerequisiteRide)
+        .OrderBy(r => r.Name)
+        .ToListAsync();
+
+        foreach (var employee in employees)
+        {
+            selectedEmployeeIds[employee.Id] = true;
+            cannotBeBreakerIds[employee.Id] = false;
+        }
+
+        foreach (var ride in rides)
+        {
+            selectedRideIds[ride.Id] = true;
+        }
+    }
+
+    private async Task GenerateRotation()
+    {
+        var selectedEmployees = employees
+            .Where(e => selectedEmployeeIds.GetValueOrDefault(e.Id))
+            .ToList();
+
+        var selectedRides = rides
+            .Where(r => selectedRideIds.GetValueOrDefault(r.Id))
+            .ToList();
+
+        var cannotBeBreakerEmployeeIds = cannotBeBreakerIds
+            .Where(pair => pair.Value)
+            .Select(pair => pair.Key)
+            .ToList();
+
+        currentResult = await RotationService.GenerateRotation(
+            selectedEmployees,
+            selectedRides,
+            trainingCount,
+            breakerCount,
+            cannotBeBreakerEmployeeIds);
+
+        message = $"Generated {currentResult.Assignments.Count} ride assignments and {currentResult.Breakers.Count} breakers.";
+    }
+
+    private async Task SaveRotation()
+    {
+        await RotationService.SaveRotation(currentResult.Assignments);
+        message = "Rotation saved.";
+    }
+
+    private void ResetRotation()
+    {
+        currentResult = new RotationGenerationResult();
+        message = "Rotation reset.";
+    }
+}

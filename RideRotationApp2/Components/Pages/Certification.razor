@@ -1,0 +1,266 @@
+﻿@page "/certifications"
+@rendermode InteractiveServer
+
+@using RideRotationApp2.Models
+@using RideRotationApp2.Services
+
+@inject CertificationService Service
+@inject IJSRuntime JS
+
+<h1>Certifications</h1>
+
+<h3>Add Person</h3>
+<input placeholder="Name" @bind="newEmployeeName" />
+<input placeholder="Area" @bind="newEmployeeArea" />
+<button @onclick="AddEmployee">Add Person</button>
+
+<h3>Add Ride</h3>
+<input placeholder="Ride name" @bind="newRideName" />
+<input placeholder="Ride area" @bind="newRideArea" />
+<button @onclick="AddRide">Add Ride</button>
+
+<h3>Filters</h3>
+<input placeholder="Search name" @bind="nameSearch" @bind:event="oninput" />
+
+<select @bind="selectedAreaFilter">
+    <option value="">All Areas</option>
+    @foreach (var area in employees.Select(e => e.Area)
+    .Where(a => !string.IsNullOrWhiteSpace(a))
+    .Distinct()
+    .OrderBy(a => a))
+    {
+        <option value="@area">@area</option>
+    }
+</select>
+
+<select @bind="selectedRideFilter">
+    <option value="">All Rides</option>
+    @foreach (var ride in rides.OrderBy(r => r.Name))
+    {
+        <option value="@ride.Name">@ride.Name</option>
+    }
+</select>
+
+<p>@message</p>
+
+@if (employees.Count > 0)
+{
+    <table border="1" cellpadding="8">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Area</th>
+
+                @foreach (var ride in rides)
+                {
+                    <th>
+                        <div>@ride.Name</div>
+                        <button @onclick="() => ConfirmDeleteRide(ride)">Delete</button>
+                    </th>
+                }
+
+                <th>Actions</th>
+            </tr>
+        </thead>
+
+        <tbody>
+            @foreach (var employee in FilteredEmployees)
+            {
+                <tr>
+                    <td>@employee.Name</td>
+
+                    <td>
+                        <input value="@employee.Area"
+                               @onchange="async e => await UpdateArea(employee, e)" />
+                    </td>
+
+                    @foreach (var ride in rides)
+                    {
+                        var cert = employee.Certifications
+                        .FirstOrDefault(c => c.Ride.Name == ride.Name);
+
+                        <td>
+                            @if (cert != null)
+                            {
+                                <input type="checkbox"
+                                       checked="@cert.IsCertified"
+                                       @onchange="async e => await UpdateCertification(cert, e)" />
+                            }
+                        </td>
+                    }
+
+                    <td>
+                        <button @onclick="() => ConfirmDeleteEmployee(employee)">Delete</button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+else
+{
+    <p>No employees yet.</p>
+}
+
+@code {
+    private string message = "Loading...";
+
+    private List<Employee> employees = new();
+    private List<Ride> rides = new();
+
+    private string newEmployeeName = "";
+    private string newEmployeeArea = "";
+
+    private string newRideName = "";
+    private string newRideArea = "";
+
+    private string nameSearch = "";
+    private string selectedAreaFilter = "";
+    private string selectedRideFilter = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        var data = await Service.LoadData();
+
+        employees = data.Item1;
+        rides = data.Item2;
+
+        message = "Loaded.";
+    }
+
+    private IEnumerable<Employee> FilteredEmployees
+    {
+        get
+        {
+            var result = employees.AsEnumerable();
+
+            if (!string.IsNullOrWhiteSpace(nameSearch))
+            {
+                result = result.Where(e =>
+                    e.Name.Contains(nameSearch, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (!string.IsNullOrWhiteSpace(selectedAreaFilter))
+            {
+                result = result.Where(e =>
+                    e.Area.Equals(selectedAreaFilter, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (!string.IsNullOrWhiteSpace(selectedRideFilter))
+            {
+                result = result.Where(e =>
+                    e.Certifications.Any(c =>
+                        c.Ride.Name == selectedRideFilter &&
+                        c.IsCertified));
+            }
+
+            return result;
+        }
+    }
+
+    private async Task AddEmployee()
+    {
+        if (string.IsNullOrWhiteSpace(newEmployeeName))
+        {
+            message = "Name is required.";
+            return;
+        }
+
+        if (employees.Any(e => e.Name.Equals(newEmployeeName.Trim(), StringComparison.OrdinalIgnoreCase)))
+        {
+            message = "That person already exists.";
+            return;
+        }
+
+        await Service.AddEmployee(newEmployeeName.Trim(), newEmployeeArea.Trim(), rides);
+
+        newEmployeeName = "";
+        newEmployeeArea = "";
+
+        await LoadData();
+
+        message = "Person added.";
+    }
+
+    private async Task AddRide()
+    {
+        if (string.IsNullOrWhiteSpace(newRideName))
+        {
+            message = "Ride name is required.";
+            return;
+        }
+
+        if (rides.Any(r => r.Name.Equals(newRideName.Trim(), StringComparison.OrdinalIgnoreCase)))
+        {
+            message = "That ride already exists.";
+            return;
+        }
+
+        await Service.AddRide(newRideName.Trim(), newRideArea.Trim(), employees);
+
+        newRideName = "";
+        newRideArea = "";
+
+        await LoadData();
+
+        message = "Ride added.";
+    }
+
+    private async Task UpdateCertification(EmployeeRideCertification cert, ChangeEventArgs e)
+    {
+        cert.IsCertified = (bool)e.Value!;
+        await Service.SaveChanges();
+
+        message = "Saved certification change.";
+    }
+
+    private async Task UpdateArea(Employee employee, ChangeEventArgs e)
+    {
+        employee.Area = e.Value?.ToString() ?? "";
+        await Service.SaveChanges();
+
+        message = "Saved area change.";
+    }
+
+    private async Task DeleteEmployee(Employee employee)
+    {
+        await Service.DeleteEmployee(employee);
+        await LoadData();
+
+        message = $"{employee.Name} deleted.";
+    }
+
+    private async Task DeleteRide(Ride ride)
+    {
+        await Service.DeleteRide(ride);
+        await LoadData();
+
+        message = $"{ride.Name} deleted.";
+    }
+    private async Task ConfirmDeleteEmployee(Employee employee)
+    {
+        bool confirmed = await JS.InvokeAsync<bool>(
+            "confirm",
+            $"Delete {employee.Name}?");
+
+        if (!confirmed) return;
+
+        await DeleteEmployee(employee);
+    }
+
+    private async Task ConfirmDeleteRide(Ride ride)
+    {
+        bool confirmed = await JS.InvokeAsync<bool>(
+            "confirm",
+            $"Delete ride {ride.Name}? This removes that certification column for everyone.");
+
+        if (!confirmed) return;
+
+        await DeleteRide(ride);
+    }
+}
