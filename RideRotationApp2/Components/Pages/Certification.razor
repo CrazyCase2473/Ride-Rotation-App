@@ -3,9 +3,11 @@
 
 @using RideRotationApp2.Models
 @using RideRotationApp2.Services
+@using RideRotationApp2.Data
+@using Microsoft.EntityFrameworkCore
 
 @inject CertificationService Service
-@inject IJSRuntime JS
+@inject AppDbContext Db
 
 <h1>Certifications</h1>
 
@@ -25,9 +27,9 @@
 <select @bind="selectedAreaFilter">
     <option value="">All Areas</option>
     @foreach (var area in employees.Select(e => e.Area)
-    .Where(a => !string.IsNullOrWhiteSpace(a))
-    .Distinct()
-    .OrderBy(a => a))
+        .Where(a => !string.IsNullOrWhiteSpace(a))
+        .Distinct()
+        .OrderBy(a => a))
     {
         <option value="@area">@area</option>
     }
@@ -55,7 +57,25 @@
                 {
                     <th>
                         <div>@ride.Name</div>
-                        <button @onclick="() => ConfirmDeleteRide(ride)">Delete</button>
+
+                        <div>
+                            <small>Requires:</small>
+                            <br />
+
+                            <select value="@ride.PrerequisiteRideId"
+                                    @onchange="async e => await SetPrerequisite(ride, e.Value?.ToString())">
+                                <option value="">None</option>
+
+                                @foreach (var possiblePrereq in rides.Where(r => r.Id != ride.Id).OrderBy(r => r.Name))
+                                {
+                                    <option value="@possiblePrereq.Id">
+                                        @possiblePrereq.Name
+                                    </option>
+                                }
+                            </select>
+                        </div>
+
+                        <button @onclick="() => DeleteRide(ride)">Delete</button>
                     </th>
                 }
 
@@ -77,7 +97,7 @@
                     @foreach (var ride in rides)
                     {
                         var cert = employee.Certifications
-                        .FirstOrDefault(c => c.Ride.Name == ride.Name);
+                            .FirstOrDefault(c => c.Ride.Name == ride.Name);
 
                         <td>
                             @if (cert != null)
@@ -90,7 +110,7 @@
                     }
 
                     <td>
-                        <button @onclick="() => ConfirmDeleteEmployee(employee)">Delete</button>
+                        <button @onclick="() => DeleteEmployee(employee)">Delete</button>
                     </td>
                 </tr>
             }
@@ -125,10 +145,16 @@ else
 
     private async Task LoadData()
     {
-        var data = await Service.LoadData();
+        employees = await Db.Employees
+            .Include(e => e.Certifications)
+            .ThenInclude(c => c.Ride)
+            .OrderBy(e => e.Name)
+            .ToListAsync();
 
-        employees = data.Item1;
-        rides = data.Item2;
+        rides = await Db.Rides
+            .Include(r => r.PrerequisiteRide)
+            .OrderBy(r => r.Name)
+            .ToListAsync();
 
         message = "Loaded.";
     }
@@ -227,6 +253,23 @@ else
         message = "Saved area change.";
     }
 
+    private async Task SetPrerequisite(Ride ride, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            ride.PrerequisiteRideId = null;
+        }
+        else
+        {
+            ride.PrerequisiteRideId = int.Parse(value);
+        }
+
+        await Db.SaveChangesAsync();
+        await LoadData();
+
+        message = $"{ride.Name} prerequisite updated.";
+    }
+
     private async Task DeleteEmployee(Employee employee)
     {
         await Service.DeleteEmployee(employee);
@@ -241,26 +284,5 @@ else
         await LoadData();
 
         message = $"{ride.Name} deleted.";
-    }
-    private async Task ConfirmDeleteEmployee(Employee employee)
-    {
-        bool confirmed = await JS.InvokeAsync<bool>(
-            "confirm",
-            $"Delete {employee.Name}?");
-
-        if (!confirmed) return;
-
-        await DeleteEmployee(employee);
-    }
-
-    private async Task ConfirmDeleteRide(Ride ride)
-    {
-        bool confirmed = await JS.InvokeAsync<bool>(
-            "confirm",
-            $"Delete ride {ride.Name}? This removes that certification column for everyone.");
-
-        if (!confirmed) return;
-
-        await DeleteRide(ride);
     }
 }

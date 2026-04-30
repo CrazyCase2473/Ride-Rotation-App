@@ -43,32 +43,41 @@
 <h3>Breaker Count</h3>
 <input type="number" @bind="breakerCount" min="0" />
 
-<h3>Working Today</h3>
-@foreach (var employee in employees)
-{
-    <label style="display:block;">
-        <input type="checkbox" @bind="selectedEmployeeIds[employee.Id]" />
-        @employee.Name (@employee.Area)
-    </label>
-}
+<details open>
+    <summary><strong>Working Today</strong></summary>
 
-<h3>Can't Be Breaker</h3>
-@foreach (var employee in employees)
-{
-    <label style="display:block;">
-        <input type="checkbox" @bind="cannotBeBreakerIds[employee.Id]" />
-        @employee.Name
-    </label>
-}
+    @foreach (var employee in employees)
+    {
+        <label style="display:block;">
+            <input type="checkbox" @bind="selectedEmployeeIds[employee.Id]" />
+            @employee.Name (@employee.Area)
+        </label>
+    }
+</details>
 
-<h3>Open Rides</h3>
-@foreach (var ride in rides)
-{
-    <label style="display:block;">
-        <input type="checkbox" @bind="selectedRideIds[ride.Id]" />
-        @ride.Name
-    </label>
-}
+<details>
+    <summary><strong>Can't Be Breaker</strong></summary>
+
+    @foreach (var employee in employees)
+    {
+        <label style="display:block;">
+            <input type="checkbox" @bind="cannotBeBreakerIds[employee.Id]" />
+            @employee.Name
+        </label>
+    }
+</details>
+
+<details open>
+    <summary><strong>Open Rides</strong></summary>
+
+    @foreach (var ride in rides)
+    {
+        <label style="display:block;">
+            <input type="checkbox" @bind="selectedRideIds[ride.Id]" />
+            @ride.Name
+        </label>
+    }
+</details>
 
 <br />
 
