@@ -275,10 +275,15 @@ public class RotationService
 
     public async Task SaveRotation(List<RotationResultItem> assignments)
     {
-        int rotationNumber = await _db.RotationAssignments
-            .Select(r => r.RotationNumber)
-            .DefaultIfEmpty(0)
-            .MaxAsync() + 1;
+        int lastRotationNumber = 0;
+
+        if (await _db.RotationAssignments.AnyAsync())
+        {
+            lastRotationNumber = await _db.RotationAssignments
+                .MaxAsync(r => r.RotationNumber);
+        }
+
+        int rotationNumber = lastRotationNumber + 1;
 
         foreach (var item in assignments.Where(a => !a.IsTraining))
         {

@@ -16,9 +16,21 @@
 @if (currentResult.Warnings.Count > 0)
 {
     <div style="border:1px solid red; padding:10px; margin:10px 0;">
-        <strong>Warnings</strong>
+        <strong>Rotation Warnings</strong>
 
         @foreach (var warning in currentResult.Warnings)
+        {
+            <div>@warning</div>
+        }
+    </div>
+}
+
+@if (nextShiftWarnings.Count > 0)
+{
+    <div style="border:1px solid orange; padding:10px; margin:10px 0;">
+        <strong>Next Shift Warnings</strong>
+
+        @foreach (var warning in nextShiftWarnings)
         {
             <div>@warning</div>
         }
@@ -85,12 +97,12 @@
     {
         <h2>Breakers</h2>
 
-        @foreach (var breaker in currentResult.Breakers)
+        @for (int i = 0; i < currentResult.Breakers.Count; i++)
         {
+            var breaker = currentResult.Breakers[i];
+
             <div style="border:1px solid #aaa; padding:10px; margin:8px 0;">
-                <strong>Breaker</strong>
-                <br />
-                @breaker.Name
+                <strong>Breaker @(i + 1): @breaker.Name</strong>
 
                 <div>
                     Covers:
@@ -112,6 +124,64 @@
     }
 
     <button @onclick="SaveRotation">Save Rotation</button>
+
+    <h2>Next Shift Setup</h2>
+
+    <p>
+        The app automatically creates:
+        <br />
+        - 0 breakers: one full ride circle
+        <br />
+        - 1 breaker: one breaker rotation line
+        <br />
+        - 2 breakers: two breaker rotation lines
+    </p>
+
+    <h3>Next Shift Training Count</h3>
+    <input type="number" @bind="nextShiftTrainingCount" min="0" />
+
+    <br />
+    <br />
+
+    <button @onclick="GenerateNextShift">Next Shift</button>
+}
+
+@if (nextShifts.Count > 0)
+{
+    <h2>Next Shifts</h2>
+
+    @for (int i = 0; i < nextShifts.Count; i++)
+    {
+        int shiftIndex = i;
+
+        <div style="border:2px solid #666; padding:10px; margin:10px 0;">
+            <h3>Shift @(shiftIndex + 2)</h3>
+
+            <button @onclick="() => DeleteShift(shiftIndex)">Reset This Shift</button>
+
+            @foreach (var move in nextShifts[shiftIndex])
+            {
+                <div>
+                    @if (move.FromPosition.StartsWith("Breaker", StringComparison.OrdinalIgnoreCase))
+                    {
+                        <strong>Breaker: @move.EmployeeName</strong>
+                    }
+                    else
+                    {
+                        <strong>@move.EmployeeName</strong>
+                    }
+
+                    :
+                    @move.FromPosition → @move.ToPosition
+
+                    @if (move.IsTraining)
+                    {
+                        <span> (Training)</span>
+                    }
+                </div>
+            }
+        </div>
+    }
 }
 
 @code {
@@ -128,6 +198,11 @@
 
     private int trainingCount = 0;
     private int breakerCount = 0;
+    private int nextShiftTrainingCount = 0;
+
+    private List<List<NextShiftMove>> nextShifts = new();
+    private List<ShiftSnapshot> shiftSnapshots = new();
+    private List<string> nextShiftWarnings = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -138,9 +213,9 @@
             .ToListAsync();
 
         rides = await Db.Rides
-        .Include(r => r.PrerequisiteRide)
-        .OrderBy(r => r.Name)
-        .ToListAsync();
+            .Include(r => r.PrerequisiteRide)
+            .OrderBy(r => r.Name)
+            .ToListAsync();
 
         foreach (var employee in employees)
         {
@@ -151,11 +226,15 @@
         foreach (var ride in rides)
         {
             selectedRideIds[ride.Id] = true;
-        }   
+        }
     }
 
     private async Task GenerateRotation()
     {
+        nextShiftWarnings.Clear();
+        nextShifts.Clear();
+        shiftSnapshots.Clear();
+
         var selectedEmployees = employees
             .Where(e => selectedEmployeeIds.GetValueOrDefault(e.Id))
             .ToList();
@@ -188,6 +267,335 @@
     private void ResetRotation()
     {
         currentResult = new RotationGenerationResult();
+        nextShifts.Clear();
+        shiftSnapshots.Clear();
+        nextShiftWarnings.Clear();
         message = "Rotation reset.";
+    }
+
+    private void GenerateNextShift()
+    {
+        nextShiftWarnings.Clear();
+
+        if (currentResult.Assignments.Count == 0)
+        {
+            message = "Generate a rotation first.";
+            return;
+        }
+
+        ShiftSnapshot currentSnapshot;
+
+        if (shiftSnapshots.Count == 0)
+        {
+            currentSnapshot = BuildSnapshotFromCurrentRotation();
+            shiftSnapshots.Add(currentSnapshot);
+        }
+        else
+        {
+            currentSnapshot = shiftSnapshots.Last();
+        }
+
+        var ridePositions = currentResult.Assignments
+            .Where(a => !a.IsTraining)
+            .Select(a => a.Ride.Name)
+            .Distinct()
+            .ToList();
+
+        var breakerPositions = currentResult.Breakers
+            .Select((breaker, index) => $"Breaker {index + 1}")
+            .ToList();
+
+        var automaticLines = BuildAutomaticRotationLines(ridePositions, breakerPositions);
+
+        var allMoves = new List<NextShiftMove>();
+        var nextSnapshot = new ShiftSnapshot();
+
+        int trainingsRemaining = nextShiftTrainingCount;
+
+        foreach (var line in automaticLines)
+        {
+            bool lineWorked = TryBuildBestLineMoves(
+                line,
+                currentSnapshot,
+                nextSnapshot,
+                allMoves,
+                ref trainingsRemaining);
+
+            if (!lineWorked)
+            {
+                nextShiftWarnings.Add($"Could not create a valid next-shift line for: {string.Join(", ", line)}");
+            }
+        }
+
+        if (nextShiftWarnings.Count > 0)
+        {
+            message = "Next shift has warnings. It could not find a valid automatic rotation.";
+            return;
+        }
+
+        nextShifts.Add(allMoves);
+        shiftSnapshots.Add(nextSnapshot);
+
+        message = $"Generated Shift {nextShifts.Count + 1}.";
+    }
+
+    private List<List<string>> BuildAutomaticRotationLines(
+        List<string> ridePositions,
+        List<string> breakerPositions)
+    {
+        var lines = new List<List<string>>();
+
+        if (breakerPositions.Count == 0)
+        {
+            lines.Add(ridePositions);
+            return lines;
+        }
+
+        if (breakerPositions.Count == 1)
+        {
+            var line = new List<string> { breakerPositions[0] };
+            line.AddRange(ridePositions);
+            lines.Add(line);
+            return lines;
+        }
+
+        int breakerCount = breakerPositions.Count;
+        var groups = new List<List<string>>();
+
+        for (int i = 0; i < breakerCount; i++)
+        {
+            groups.Add(new List<string> { breakerPositions[i] });
+        }
+
+        for (int i = 0; i < ridePositions.Count; i++)
+        {
+            int groupIndex = i % breakerCount;
+            groups[groupIndex].Add(ridePositions[i]);
+        }
+
+        lines.AddRange(groups);
+        return lines;
+    }
+
+    private bool TryBuildBestLineMoves(
+        List<string> linePositions,
+        ShiftSnapshot currentSnapshot,
+        ShiftSnapshot nextSnapshot,
+        List<NextShiftMove> allMoves,
+        ref int trainingsRemaining)
+    {
+        var positionsInLine = linePositions
+            .Where(p => currentSnapshot.Positions.ContainsKey(p))
+            .ToList();
+
+        if (positionsInLine.Count < 2)
+            return false;
+
+        var possibleOrders = GetPositionPermutations(positionsInLine);
+
+        foreach (var order in possibleOrders)
+        {
+            var testMoves = new List<NextShiftMove>();
+
+            var testSnapshot = new ShiftSnapshot
+            {
+                Positions = new Dictionary<string, string>(nextSnapshot.Positions),
+                TrainingStatus = new Dictionary<string, bool>(nextSnapshot.TrainingStatus)
+            };
+
+            int testTrainingsRemaining = trainingsRemaining;
+            bool worked = true;
+
+            for (int i = 0; i < order.Count; i++)
+            {
+                string fromPosition = order[i];
+                string toPosition = order[(i + 1) % order.Count];
+
+                string employeeName = currentSnapshot.Positions[fromPosition];
+
+                var employee = employees.FirstOrDefault(e =>
+                    e.Name.Equals(employeeName, StringComparison.OrdinalIgnoreCase));
+
+                if (employee == null)
+                {
+                    worked = false;
+                    break;
+                }
+
+                bool isTraining = false;
+
+                if (!CanMoveToPosition(employee, toPosition, ref testTrainingsRemaining, out isTraining))
+                {
+                    worked = false;
+                    break;
+                }
+
+                testMoves.Add(new NextShiftMove
+                {
+                    EmployeeName = employee.Name,
+                    FromPosition = fromPosition,
+                    ToPosition = toPosition,
+                    IsTraining = isTraining
+                });
+
+                testSnapshot.Positions[toPosition] = employee.Name;
+                testSnapshot.TrainingStatus[toPosition] = isTraining;
+            }
+
+            if (worked)
+            {
+                trainingsRemaining = testTrainingsRemaining;
+
+                foreach (var move in testMoves)
+                {
+                    allMoves.Add(move);
+                }
+
+                foreach (var pair in testSnapshot.Positions)
+                {
+                    nextSnapshot.Positions[pair.Key] = pair.Value;
+                }
+
+                foreach (var pair in testSnapshot.TrainingStatus)
+                {
+                    nextSnapshot.TrainingStatus[pair.Key] = pair.Value;
+                }
+
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private List<List<string>> GetPositionPermutations(List<string> positions)
+    {
+        var results = new List<List<string>>();
+
+        void Backtrack(List<string> current, List<string> remaining)
+        {
+            if (remaining.Count == 0)
+            {
+                results.Add(current.ToList());
+                return;
+            }
+
+            foreach (var position in remaining.ToList())
+            {
+                current.Add(position);
+
+                var nextRemaining = remaining
+                    .Where(p => p != position)
+                    .ToList();
+
+                Backtrack(current, nextRemaining);
+
+                current.RemoveAt(current.Count - 1);
+            }
+        }
+
+        Backtrack(new List<string>(), positions);
+
+        return results;
+    }
+
+    private bool CanMoveToPosition(
+        Employee employee,
+        string toPosition,
+        ref int trainingsRemaining,
+        out bool isTraining)
+    {
+        isTraining = false;
+
+        if (IsBreakerPosition(toPosition))
+        {
+            return true;
+        }
+
+        var ride = FindRideByName(toPosition);
+
+        if (ride == null)
+        {
+            return false;
+        }
+
+        if (IsCertified(employee, ride))
+        {
+            return true;
+        }
+
+        if (trainingsRemaining > 0 && CanTrainOnRide(employee, ride))
+        {
+            trainingsRemaining--;
+            isTraining = true;
+            return true;
+        }
+
+        return false;
+    }
+
+    private ShiftSnapshot BuildSnapshotFromCurrentRotation()
+    {
+        var snapshot = new ShiftSnapshot();
+
+        foreach (var assignment in currentResult.Assignments)
+        {
+            snapshot.Positions[assignment.Ride.Name] = assignment.Employee.Name;
+            snapshot.TrainingStatus[assignment.Ride.Name] = assignment.IsTraining;
+        }
+
+        for (int i = 0; i < currentResult.Breakers.Count; i++)
+        {
+            string breakerPosition = $"Breaker {i + 1}";
+            snapshot.Positions[breakerPosition] = currentResult.Breakers[i].Name;
+            snapshot.TrainingStatus[breakerPosition] = false;
+        }
+
+        return snapshot;
+    }
+
+    private void DeleteShift(int index)
+    {
+        if (index < 0 || index >= nextShifts.Count)
+            return;
+
+        nextShifts.RemoveAt(index);
+
+        int snapshotIndex = index + 1;
+
+        if (snapshotIndex >= 0 && snapshotIndex < shiftSnapshots.Count)
+        {
+            shiftSnapshots.RemoveRange(snapshotIndex, shiftSnapshots.Count - snapshotIndex);
+        }
+
+        message = $"Deleted Shift {index + 2}. Any later shifts were also removed.";
+    }
+
+    private Ride? FindRideByName(string rideName)
+    {
+        return rides.FirstOrDefault(r =>
+            r.Name.Equals(rideName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private bool IsBreakerPosition(string position)
+    {
+        return position.StartsWith("Breaker", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool IsCertified(Employee employee, Ride ride)
+    {
+        return employee.Certifications.Any(cert =>
+            cert.RideId == ride.Id &&
+            cert.IsCertified);
+    }
+
+    private bool CanTrainOnRide(Employee employee, Ride ride)
+    {
+        if (ride.PrerequisiteRideId == null)
+            return true;
+
+        return employee.Certifications.Any(cert =>
+            cert.RideId == ride.PrerequisiteRideId &&
+            cert.IsCertified);
     }
 }
