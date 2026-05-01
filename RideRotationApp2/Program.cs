@@ -13,6 +13,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite("Data Source=Data/ride_rotation.db"));
 builder.Services.AddScoped<CertificationService>();
 builder.Services.AddScoped<RotationService>();
+builder.Services.AddScoped<NextShiftService>();
 
 var app = builder.Build();
 

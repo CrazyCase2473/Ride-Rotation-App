@@ -6,6 +6,7 @@
 @using RideRotationApp2.Models
 @using RideRotationApp2.Services
 
+@inject NextShiftService NextShiftService
 @inject AppDbContext Db
 @inject RotationService RotationService
 
@@ -394,67 +395,35 @@
 
         SyncTrainingRequests();
 
-        ShiftSnapshot currentSnapshot;
+        var activeEmployeeIds = selectedEmployeeIds
+            .Where(pair => pair.Value)
+            .Select(pair => pair.Key)
+            .ToHashSet();
 
-        if (shiftSnapshots.Count == 0)
+        var result = NextShiftService.GenerateNextShift(
+            currentResult,
+            employees,
+            rides,
+            shiftSnapshots,
+            activeEmployeeIds,
+            nextShiftTrainingRequests);
+
+        if (!result.Success)
         {
-            currentSnapshot = BuildSnapshotFromCurrentRotation();
-            shiftSnapshots.Add(currentSnapshot);
-        }
-        else
-        {
-            currentSnapshot = shiftSnapshots.Last();
-        }
-
-        var ridePositions = currentResult.Assignments
-            .Where(a => !a.IsTraining)
-            .Select(a => a.Ride.Name)
-            .Distinct()
-            .ToList();
-
-        var breakerPositions = currentResult.Breakers
-            .Select((breaker, index) => $"Breaker {index + 1}")
-            .ToList();
-
-        var possibleLineSets = BuildPossibleAutomaticRotationLineSets(ridePositions, breakerPositions);
-
-        foreach (var lineSet in possibleLineSets)
-        {
-            var allMoves = new List<NextShiftMove>();
-            var nextSnapshot = new ShiftSnapshot();
-
-            var availableTrainingRequests = nextShiftTrainingRequests.ToList();
-
-            bool lineSetWorked = true;
-
-            foreach (var line in lineSet)
-            {
-                bool lineWorked = TryBuildBestLineMoves(
-                    line,
-                    currentSnapshot,
-                    nextSnapshot,
-                    allMoves,
-                    availableTrainingRequests);
-
-                if (!lineWorked)
-                {
-                    lineSetWorked = false;
-                    break;
-                }
-            }
-
-            if (lineSetWorked)
-            {
-                nextShifts.Add(allMoves);
-                shiftSnapshots.Add(nextSnapshot);
-
-                message = $"Generated Shift {nextShifts.Count + 1}.";
-                return;
-            }
+            nextShiftWarnings = result.Warnings;
+            message = "Next shift could not be generated.";
+            return;
         }
 
-        nextShiftWarnings.Add("Could not create a valid next shift with the current breaker setup, certifications, and training requests.");
-        message = "Next shift could not be generated.";
+        if (result.StartingSnapshot != null && shiftSnapshots.Count == 0)
+        {
+            shiftSnapshots.Add(result.StartingSnapshot);
+        }
+
+        nextShifts.Add(result.Moves);
+        shiftSnapshots.Add(result.Snapshot);
+
+        message = $"Generated Shift {nextShifts.Count + 1}.";
     }
 
     private List<List<List<string>>> BuildPossibleAutomaticRotationLineSets(

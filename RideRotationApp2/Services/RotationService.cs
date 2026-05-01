@@ -34,28 +34,84 @@ public class RotationService
             .OrderByDescending(a => a.AssignedAt)
             .ToListAsync();
 
+        var forcedTrainingAssignments = new List<RotationResultItem>();
+        var usedEmployeeIds = new HashSet<int>();
+        var blockedRideIds = new HashSet<int>();
+
+        foreach (var request in trainingRequests)
+        {
+            if (request.EmployeeId == null || request.RideId == null)
+                continue;
+
+            var trainee = employees.FirstOrDefault(e => e.Id == request.EmployeeId);
+            var trainingRide = rides.FirstOrDefault(r => r.Id == request.RideId);
+
+            if (trainee == null || trainingRide == null)
+            {
+                result.Warnings.Add("A requested training could not be found.");
+                continue;
+            }
+
+            if (IsCertified(trainee, trainingRide))
+            {
+                result.Warnings.Add($"{trainee.Name} is already certified on {trainingRide.Name}, so they do not need training there.");
+                continue;
+            }
+
+            if (!CanTrainOnRide(trainee, trainingRide))
+            {
+                result.Warnings.Add($"{trainee.Name} cannot train on {trainingRide.Name} because they do not meet the prerequisite.");
+                continue;
+            }
+
+            forcedTrainingAssignments.Add(new RotationResultItem
+            {
+                Ride = trainingRide,
+                Employee = trainee,
+                IsTraining = true
+            });
+
+            usedEmployeeIds.Add(trainee.Id);
+            blockedRideIds.Add(trainingRide.Id);
+        }
+
+        var remainingEmployees = employees
+            .Where(e => !usedEmployeeIds.Contains(e.Id))
+            .ToList();
+
+        var remainingRides = rides
+            .Where(r => !blockedRideIds.Contains(r.Id))
+            .ToList();
+
         var normalAssignments = GenerateNormalAssignmentsWithBacktracking(
-            employees,
-            rides,
+            remainingEmployees,
+            remainingRides,
             recentAssignments);
 
-        if (normalAssignments.Count != rides.Count)
+        if (normalAssignments.Count != remainingRides.Count)
         {
-            result.Warnings.Add("Could not find a complete rotation for all selected rides.");
+            result.Warnings.Add("Could not build a full rotation around the requested training.");
             return result;
         }
 
+        result.Assignments.AddRange(forcedTrainingAssignments);
         result.Assignments.AddRange(normalAssignments);
+
+        var flexibleRequests = trainingRequests
+            .Where(r => r.EmployeeId == null || r.RideId == null)
+            .ToList();
 
         int trainingsAdded = TryAddTrainings(
             result.Assignments,
             employees,
             rides,
-            trainingRequests);
+            flexibleRequests);
 
-        if (trainingsAdded < trainingRequests.Count)
+        int totalTrainings = forcedTrainingAssignments.Count + trainingsAdded;
+
+        if (totalTrainings < trainingRequests.Count)
         {
-            result.Warnings.Add($"Only added {trainingsAdded} out of {trainingRequests.Count} trainings.");
+            result.Warnings.Add($"Only added {totalTrainings} out of {trainingRequests.Count} trainings.");
         }
 
         AddBreakers(
