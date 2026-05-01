@@ -24,7 +24,7 @@ public class RotationService
     public async Task<RotationGenerationResult> GenerateRotation(
         List<Employee> employees,
         List<Ride> rides,
-        int trainingCount,
+        List<TrainingRequest> trainingRequests,
         int breakerCount,
         List<int> cannotBeBreakerEmployeeIds)
     {
@@ -51,11 +51,11 @@ public class RotationService
             result.Assignments,
             employees,
             rides,
-            trainingCount);
+            trainingRequests);
 
-        if (trainingsAdded < trainingCount)
+        if (trainingsAdded < trainingRequests.Count)
         {
-            result.Warnings.Add($"Only added {trainingsAdded} out of {trainingCount} trainings.");
+            result.Warnings.Add($"Only added {trainingsAdded} out of {trainingRequests.Count} trainings.");
         }
 
         AddBreakers(
@@ -88,12 +88,7 @@ public class RotationService
             assignments,
             usedEmployeeIds);
 
-        if (!success)
-        {
-            return new List<RotationResultItem>();
-        }
-
-        return assignments;
+        return success ? assignments : new List<RotationResultItem>();
     }
 
     private bool TryAssignRide(
@@ -105,9 +100,7 @@ public class RotationService
         HashSet<int> usedEmployeeIds)
     {
         if (rideIndex >= rides.Count)
-        {
             return true;
-        }
 
         var ride = rides[rideIndex];
 
@@ -130,15 +123,13 @@ public class RotationService
 
             usedEmployeeIds.Add(candidate.Id);
 
-            bool worked = TryAssignRide(
+            if (TryAssignRide(
                 rideIndex + 1,
                 rides,
                 employees,
                 recentAssignments,
                 assignments,
-                usedEmployeeIds);
-
-            if (worked)
+                usedEmployeeIds))
             {
                 return true;
             }
@@ -170,52 +161,68 @@ public class RotationService
         List<RotationResultItem> assignments,
         List<Employee> employees,
         List<Ride> rides,
-        int trainingCount)
+        List<TrainingRequest> trainingRequests)
     {
         int trainingsAdded = 0;
 
-        var employeesByTrainingNeed = employees
-            .OrderBy(employee => employee.Certifications.Count(c => c.IsCertified))
-            .ToList();
-
-        foreach (var trainee in employeesByTrainingNeed)
+        foreach (var request in trainingRequests)
         {
-            if (trainingsAdded >= trainingCount)
-                break;
-
-            var traineeCurrentAssignment = assignments
-                .FirstOrDefault(a => a.Employee.Id == trainee.Id && !a.IsTraining);
-
-            if (traineeCurrentAssignment == null)
-                continue;
+            var possibleTrainees = employees
+                .Where(employee =>
+                    request.EmployeeId == null ||
+                    employee.Id == request.EmployeeId)
+                .OrderBy(employee => employee.Certifications.Count(c => c.IsCertified))
+                .ToList();
 
             var possibleTrainingRides = rides
-                .Where(ride => !IsCertified(trainee, ride))
-                .Where(ride => CanTrainOnRide(trainee, ride))
+                .Where(ride =>
+                    request.RideId == null ||
+                    ride.Id == request.RideId)
                 .OrderBy(ride => employees.Count(employee => IsCertified(employee, ride)))
                 .ToList();
 
-            foreach (var trainingRide in possibleTrainingRides)
+            bool addedThisRequest = false;
+
+            foreach (var trainee in possibleTrainees)
             {
-                var personCurrentlyOnTrainingRide = assignments
-                    .FirstOrDefault(a => a.Ride.Id == trainingRide.Id && !a.IsTraining);
+                if (addedThisRequest)
+                    break;
 
-                if (personCurrentlyOnTrainingRide == null)
+                var traineeCurrentAssignment = assignments
+                    .FirstOrDefault(a => a.Employee.Id == trainee.Id && !a.IsTraining);
+
+                if (traineeCurrentAssignment == null)
                     continue;
 
-                var traineeOldRide = traineeCurrentAssignment.Ride;
+                foreach (var trainingRide in possibleTrainingRides)
+                {
+                    if (IsCertified(trainee, trainingRide))
+                        continue;
 
-                if (!IsCertified(personCurrentlyOnTrainingRide.Employee, traineeOldRide))
-                    continue;
+                    if (!CanTrainOnRide(trainee, trainingRide))
+                        continue;
 
-                traineeCurrentAssignment.Ride = trainingRide;
-                traineeCurrentAssignment.IsTraining = true;
+                    var personCurrentlyOnTrainingRide = assignments
+                        .FirstOrDefault(a => a.Ride.Id == trainingRide.Id && !a.IsTraining);
 
-                personCurrentlyOnTrainingRide.Ride = traineeOldRide;
-                personCurrentlyOnTrainingRide.IsTraining = false;
+                    if (personCurrentlyOnTrainingRide == null)
+                        continue;
 
-                trainingsAdded++;
-                break;
+                    var traineeOldRide = traineeCurrentAssignment.Ride;
+
+                    if (!IsCertified(personCurrentlyOnTrainingRide.Employee, traineeOldRide))
+                        continue;
+
+                    traineeCurrentAssignment.Ride = trainingRide;
+                    traineeCurrentAssignment.IsTraining = true;
+
+                    personCurrentlyOnTrainingRide.Ride = traineeOldRide;
+                    personCurrentlyOnTrainingRide.IsTraining = false;
+
+                    trainingsAdded++;
+                    addedThisRequest = true;
+                    break;
+                }
             }
         }
 
