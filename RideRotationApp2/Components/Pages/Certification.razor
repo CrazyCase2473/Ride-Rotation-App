@@ -9,118 +9,141 @@
 @inject CertificationService Service
 @inject AppDbContext Db
 
-<h1>Certifications</h1>
+<div class="cert-page">
+    <div class="top-bar">
+        <h1>Certifications</h1>
+        <p>@message</p>
 
-<h3>Add Person</h3>
-<input placeholder="Name" @bind="newEmployeeName" />
-<input placeholder="Area" @bind="newEmployeeArea" />
-<button @onclick="AddEmployee">Add Person</button>
+        <div class="action-row">
+            <input class="text-input"
+                   placeholder="Search person"
+                   @bind="nameSearch"
+                   @bind:event="oninput" />
 
-<h3>Add Ride</h3>
-<input placeholder="Ride name" @bind="newRideName" />
-<input placeholder="Ride area" @bind="newRideArea" />
-<button @onclick="AddRide">Add Ride</button>
-
-<h3>Filters</h3>
-<input placeholder="Search name" @bind="nameSearch" @bind:event="oninput" />
-
-<select @bind="selectedAreaFilter">
-    <option value="">All Areas</option>
-    @foreach (var area in employees.Select(e => e.Area)
-        .Where(a => !string.IsNullOrWhiteSpace(a))
-        .Distinct()
-        .OrderBy(a => a))
-    {
-        <option value="@area">@area</option>
-    }
-</select>
-
-<select @bind="selectedRideFilter">
-    <option value="">All Rides</option>
-    @foreach (var ride in rides.OrderBy(r => r.Name))
-    {
-        <option value="@ride.Name">@ride.Name</option>
-    }
-</select>
-
-<p>@message</p>
-
-@if (employees.Count > 0)
-{
-    <table border="1" cellpadding="8">
-        <thead>
-            <tr>
-                <th>Name</th>
-                <th>Area</th>
-
-                @foreach (var ride in rides)
+            <select class="filter-select" @bind="selectedAreaFilter">
+                <option value="">All Home Areas</option>
+                @foreach (var area in AllAreas)
                 {
-                    <th>
-                        <div>@ride.Name</div>
+                    <option value="@area">@area</option>
+                }
+            </select>
 
-                        <div>
-                            <small>Requires:</small>
-                            <br />
+            <select class="filter-select" @bind="selectedRideFilter">
+                <option value="">All Ride Certs</option>
+                @foreach (var ride in rides.OrderBy(r => r.Name))
+                {
+                    <option value="@ride.Name">@ride.Name</option>
+                }
+            </select>
+        </div>
+    </div>
 
-                            <select value="@ride.PrerequisiteRideId"
-                                    @onchange="async e => await SetPrerequisite(ride, e.Value?.ToString())">
-                                <option value="">None</option>
+    <div class="layout">
+        <div>
+            <div class="panel">
+                <h3>Add Person</h3>
 
-                                @foreach (var possiblePrereq in rides.Where(r => r.Id != ride.Id).OrderBy(r => r.Name))
-                                {
-                                    <option value="@possiblePrereq.Id">
-                                        @possiblePrereq.Name
-                                    </option>
-                                }
-                            </select>
+                <input class="text-input" placeholder="Name" @bind="newEmployeeName" />
+                <input class="text-input" placeholder="Home area" @bind="newEmployeeArea" />
+
+                <button class="primary-button" @onclick="AddEmployee">Add Person</button>
+            </div>
+
+            <div class="panel">
+                <h3>Add Ride</h3>
+
+                <input class="text-input" placeholder="Ride name" @bind="newRideName" />
+                <input class="text-input" placeholder="Ride area" @bind="newRideArea" />
+
+                <button class="primary-button" @onclick="AddRide">Add Ride</button>
+            </div>
+
+            <div class="panel">
+                <h3>Ride Prerequisites</h3>
+
+                @foreach (var ride in rides.OrderBy(r => r.Area).ThenBy(r => r.Name))
+                {
+                    <div class="cert-prereq-card">
+                        <strong>@ride.Name</strong>
+                        <div class="muted-text">@ride.Area</div>
+
+                        <select value="@ride.PrerequisiteRideId"
+                                @onchange="async e => await SetPrerequisite(ride, e.Value?.ToString())">
+                            <option value="">No prerequisite</option>
+
+                            @foreach (var possiblePrereq in rides.Where(r => r.Id != ride.Id).OrderBy(r => r.Name))
+                            {
+                                <option value="@possiblePrereq.Id">
+                                    @possiblePrereq.Name
+                                </option>
+                            }
+                        </select>
+
+                        <button class="danger-button" @onclick="() => DeleteRide(ride)">Delete Ride</button>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <div>
+            @if (employees.Count > 0)
+            {
+                @foreach (var employee in FilteredEmployees)
+                {
+                    <div class="employee-cert-card">
+                        <div class="employee-cert-header">
+                            <div>
+                                <h3>@employee.Name</h3>
+                                <label>
+                                    Home Area
+                                    <input class="text-input"
+                                           value="@employee.Area"
+                                           @onchange="async e => await UpdateArea(employee, e)" />
+                                </label>
+                            </div>
+
+                            <button class="danger-button" @onclick="() => DeleteEmployee(employee)">Delete</button>
                         </div>
 
-                        <button @onclick="() => DeleteRide(ride)">Delete</button>
-                    </th>
+                        @foreach (var rideArea in RideAreas)
+                        {
+                            <details class="ride-area-section" open>
+                                <summary><strong>@rideArea Rides</strong></summary>
+
+                                <div class="cert-grid">
+                                    @foreach (var ride in rides
+                                   .Where(r => AreaMatches(r.Area, rideArea))
+                                   .OrderBy(r => r.Name))
+                                    {
+                                        var cert = employee.Certifications
+                                        .FirstOrDefault(c => c.Ride.Name == ride.Name);
+
+                                        <label class="cert-checkbox">
+                                            @if (cert != null)
+                                            {
+                                                <input type="checkbox"
+                                                       checked="@cert.IsCertified"
+                                                       @onchange="async e => await UpdateCertification(cert, e)" />
+                                            }
+
+                                            <span>@ride.Name</span>
+                                        </label>
+                                    }
+                                </div>
+                            </details>
+                        }
+                    </div>
                 }
-
-                <th>Actions</th>
-            </tr>
-        </thead>
-
-        <tbody>
-            @foreach (var employee in FilteredEmployees)
-            {
-                <tr>
-                    <td>@employee.Name</td>
-
-                    <td>
-                        <input value="@employee.Area"
-                               @onchange="async e => await UpdateArea(employee, e)" />
-                    </td>
-
-                    @foreach (var ride in rides)
-                    {
-                        var cert = employee.Certifications
-                            .FirstOrDefault(c => c.Ride.Name == ride.Name);
-
-                        <td>
-                            @if (cert != null)
-                            {
-                                <input type="checkbox"
-                                       checked="@cert.IsCertified"
-                                       @onchange="async e => await UpdateCertification(cert, e)" />
-                            }
-                        </td>
-                    }
-
-                    <td>
-                        <button @onclick="() => DeleteEmployee(employee)">Delete</button>
-                    </td>
-                </tr>
             }
-        </tbody>
-    </table>
-}
-else
-{
-    <p>No employees yet.</p>
-}
+            else
+            {
+                <div class="panel">
+                    <p>No employees yet.</p>
+                </div>
+            }
+        </div>
+    </div>
+</div>
 
 @code {
     private string message = "Loading...";
@@ -137,6 +160,23 @@ else
     private string nameSearch = "";
     private string selectedAreaFilter = "";
     private string selectedRideFilter = "";
+
+    private List<string> AllAreas =>
+        employees
+            .Select(e => e.Area)
+            .Concat(rides.Select(r => r.Area))
+            .Where(a => !string.IsNullOrWhiteSpace(a))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(a => a)
+            .ToList();
+
+    private List<string> RideAreas =>
+        rides
+            .Select(r => r.Area)
+            .Where(a => !string.IsNullOrWhiteSpace(a))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(a => a)
+            .ToList();
 
     protected override async Task OnInitializedAsync()
     {
@@ -187,6 +227,11 @@ else
 
             return result;
         }
+    }
+
+    private bool AreaMatches(string? area, string targetArea)
+    {
+        return string.Equals(area, targetArea, StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task AddEmployee()

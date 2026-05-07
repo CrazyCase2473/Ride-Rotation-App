@@ -1,0 +1,319 @@
+﻿@page
+
+body {
+    background: red !important;
+}
+"/rotation"
+@rendermode InteractiveServer
+
+@using Microsoft.EntityFrameworkCore
+@using RideRotationApp2.Data
+@using RideRotationApp2.Models
+@using RideRotationApp2.Services
+
+@inject NextShiftService NextShiftService
+@inject AppDbContext Db
+@inject RotationService RotationService
+
+<h1 > Rotation Builder</h1 >
+
+<p > @message</p >
+
+@if (currentResult.Warnings.Count > 0) {
+    <div style="border:1px solid red; padding:10px; margin:10px 0;"> <strong>Rotation Warnings</strong> @foreach (var warning in currentResult.Warnings)
+
+{
+    <div>@warning</div>
+}
+
+</div >
+}
+
+@if (nextShiftWarnings.Count > 0) {
+    <div style="border:1px solid orange; padding:10px; margin:10px 0;" >
+    <strong > Next Shift Warnings</strong >
+
+    @foreach (var warning in nextShiftWarnings) {
+        <div>@warning</div>
+    }
+
+    </div>
+}
+
+<h3 > Training Count</h3 >
+<input type="number"
+min="0"
+value="@trainingCount"
+@onchange="TrainingCountChanged" / >
+
+@if (trainingCount > 0) {
+    <h4>Training Requests</h4> @for (int i = 0; i < pageState.TrainingRequests.Count; i++)
+
+{
+    int index = i;
+    <div style="border:1px solid #ccc; padding:8px; margin:6px 0;"> <strong>Training @(index + 1)</strong> <div> Person: <select @bind="pageState.TrainingRequests[index].EmployeeId"> <option value="">Any</option> @foreach (var employee in employees)
+
+{
+    <option value="@employee.Id">@employee.Name</option>
+}
+
+</select >
+</div >
+
+<div >
+Ride:
+<select @bind="pageState.TrainingRequests[index].RideId" >
+<option value="" > Any</option >
+@foreach (var ride in rides) {
+    <option value="@ride.Id">@ride.Name</option>
+}
+
+</select >
+</div >
+</div >
+}
+}
+
+<h3 > Breaker Count</h3 >
+<input type="number" @bind="breakerCount" min="0" / >
+
+<details open >
+<summary > <strong > Working Today</strong > </summary >
+
+@foreach (var employee in employees) {
+    <label style="display:block;"> <input type="checkbox" @bind="pageState.SelectedEmployeeIds[employee.Id]" /> @employee.Name (@employee.Area) </label>
+}
+
+</details >
+
+<details >
+<summary > <strong > Can't Be Breaker</strong></summary>
+
+@foreach (var employee in employees) {
+    <label style="display:block;"> <input type="checkbox" @bind="pageState.CannotBeBreakerIds[employee.Id]" /> @employee.Name </label>
+}
+
+</details >
+
+<details open >
+<summary > <strong > Open Rides</strong > </summary >
+
+@foreach (var ride in rides) {
+    <label style="display:block;"> <input type="checkbox" @bind="pageState.SelectedRideIds[ride.Id]" /> @ride.Name </label>
+}
+
+</details >
+
+<br / >
+
+<button @onclick="GenerateRotation" > Generate Rotation</button >
+<button @onclick="ResetRotation" > Reset</button >
+
+@if (currentResult.Assignments.Count > 0) {
+    <h2>Generated Rotation</h2> @foreach (var item in currentResult.Assignments)
+
+{
+    <div style="border:1px solid #ccc; padding:10px; margin:8px 0;"> <strong>@item.Ride.Name</strong> <br /> @item.Employee.Name @if (item.IsTraining)
+
+{
+    <span> (Training)</span>
+}
+
+</div >
+}
+
+@if (currentResult.Breakers.Count > 0) {
+    <h2>Breakers</h2> @for (int i = 0; i < currentResult.Breakers.Count; i++)
+
+{
+    var breaker = currentResult.Breakers[i];
+    <div style="border:1px solid #aaa; padding:10px; margin:8px 0;"> <strong>Breaker @(i + 1): @breaker.Name</strong> <div> Covers: @
+
+{
+    var coverage = currentResult.BreakerCoverage.GetValueOrDefault(breaker.Id, new List<Ride>());
+}
+
+@if (coverage.Count == 0) {
+    <span>None</span>
+}
+
+else {
+    <span>@string.Join(", ", coverage.Select(r => r.Name))</span>
+}
+
+</div >
+</div >
+}
+}
+
+<button @onclick="SaveRotation" > Save Rotation</button >
+
+<h2 > Next Shift Setup</h2 >
+
+<h3 > Next Shift Training Count</h3 >
+<input type="number"
+min="0"
+value="@nextShiftTrainingCount"
+@onchange="NextShiftTrainingCountChanged" / >
+
+@if (nextShiftTrainingCount > 0) {
+    <h4>Next Shift Training Requests</h4> @for (int i = 0; i < pageState.NextShiftTrainingRequests.Count; i++)
+
+{
+    int index = i;
+    <div style="border:1px solid #ccc; padding:8px; margin:6px 0;"> <strong>Next Shift Training @(index + 1)</strong> <div> Person: <select @bind="pageState.NextShiftTrainingRequests[index].EmployeeId"> <option value="">Any</option> @foreach (var employee in employees)
+
+{
+    <option value="@employee.Id">@employee.Name</option>
+}
+
+</select >
+</div >
+
+<div >
+Ride:
+<select @bind="pageState.NextShiftTrainingRequests[index].RideId" >
+<option value="" > Any</option >
+@foreach (var ride in rides) {
+    <option value="@ride.Id">@ride.Name</option>
+}
+
+</select >
+</div >
+</div >
+}
+}
+
+<br / >
+<button @onclick="GenerateNextShift" > Next Shift</button >
+}
+
+@if (nextShifts.Count > 0) {
+    <h2>Next Shifts</h2> @for (int i = 0; i < nextShifts.Count; i++)
+
+{
+    int shiftIndex = i;
+    <div style="border:2px solid #666; padding:10px; margin:10px 0;"> <h3>Shift @(shiftIndex + 2)</h3> <button @onclick="() => DeleteShift(shiftIndex)">Reset This Shift</button> @foreach (var move in nextShifts[shiftIndex])
+
+{
+    <div> @if (move.FromPosition.StartsWith("Breaker", StringComparison.OrdinalIgnoreCase))
+
+{
+    <strong>Breaker: @move.EmployeeName</strong>
+}
+
+else {
+    <strong>@move.EmployeeName</strong>
+}
+
+:
+@move.FromPosition → @move.ToPosition
+
+@if (move.IsTraining) {
+    <span> (Training)</span>
+}
+
+</div >
+}
+</div >
+}
+}
+
+@code {
+    private string message = "Select employees and rides.";
+    private List<Employee> employees = new();
+    private List<Ride> rides = new();
+    private RotationPageState pageState = new();
+    private RotationGenerationResult currentResult = new();
+    private int trainingCount = 0;
+    private int breakerCount = 0;
+    private int nextShiftTrainingCount = 0;
+    private List<List<NextShiftMove>> nextShifts = new();
+    private List<ShiftSnapshot> shiftSnapshots = new();
+    private List<string> nextShiftWarnings = new();
+
+    protected override async Task OnInitializedAsync() {
+        employees = await Db.Employees .Include(e => e.Certifications) .ThenInclude(c => c.Ride) .OrderBy(e => e.Name) .ToListAsync();
+        rides = await Db.Rides .Include(r => r.PrerequisiteRide) .OrderBy(r => r.Name) .ToListAsync();
+        pageState .Initialize(employees, rides);
+        SyncTrainingRequests();
+    }
+
+    private void TrainingCountChanged(ChangeEventArgs e) {
+        trainingCount = int.Parse(e.Value?.ToString() ?? "0");
+        SyncTrainingRequests();
+    }
+
+    private void NextShiftTrainingCountChanged(ChangeEventArgs e) {
+        nextShiftTrainingCount = int.Parse(e.Value?.ToString() ?? "0");
+        SyncTrainingRequests();
+    }
+
+    private void SyncTrainingRequests() {
+        pageState .SyncTrainingRequests(trainingCount, nextShiftTrainingCount);
+    }
+
+    private async Task GenerateRotation() {
+        nextShiftWarnings .Clear();
+        nextShifts .Clear();
+        shiftSnapshots .Clear();
+        SyncTrainingRequests();
+        currentResult = await RotationService.GenerateRotation( pageState.GetSelectedEmployees(employees), pageState.GetSelectedRides(rides), pageState.TrainingRequests, breakerCount, pageState.GetCannotBeBreakerEmployeeIds());
+        message = $"Generated {currentResult.Assignments.Count} ride assignments and {currentResult.Breakers.Count} breakers.";
+    }
+
+    private async Task SaveRotation() {
+        await RotationService.SaveRotation(currentResult.Assignments);
+        message = "Rotation saved.";
+    }
+
+    private void ResetRotation() {
+        currentResult = new RotationGenerationResult();
+        nextShifts .Clear();
+        shiftSnapshots .Clear();
+        nextShiftWarnings .Clear();
+        message = "Rotation reset.";
+    }
+
+    private void GenerateNextShift() {
+        nextShiftWarnings .Clear();
+        if (currentResult.Assignments.Count == 0)
+
+{
+    message = "Generate a rotation first.";
+    return;
+}
+
+SyncTrainingRequests();
+
+var result = NextShiftService.GenerateNextShift( currentResult, employees, rides, shiftSnapshots, pageState.GetActiveEmployeeIds(), pageState.NextShiftTrainingRequests);
+
+if (!result.Success) {
+    nextShiftWarnings = result.Warnings;
+    message = "Next shift could not be generated.";
+    return;
+}
+
+if (result.StartingSnapshot != null && shiftSnapshots.Count == 0) {
+    shiftSnapshots .Add(result.StartingSnapshot);
+}
+
+nextShifts.Add(result.Moves);
+shiftSnapshots.Add(result.Snapshot);
+
+message = $"Generated Shift {nextShifts.Count + 1}.";
+}
+
+private void DeleteShift(int index) {
+    if (index < 0 || index >= nextShifts.Count) return;
+    nextShifts .RemoveAt(index);
+    int snapshotIndex = index + 1;
+    if (snapshotIndex >= 0 && snapshotIndex < shiftSnapshots.Count)
+
+{
+    shiftSnapshots .RemoveRange(snapshotIndex, shiftSnapshots.Count - snapshotIndex);
+}
+
+message = $"Deleted Shift {index + 2}. Any later shifts were also removed.";
+}
+}

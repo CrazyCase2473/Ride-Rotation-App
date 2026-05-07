@@ -10,234 +10,300 @@
 @inject AppDbContext Db
 @inject RotationService RotationService
 
-<h1>Rotation Builder</h1>
+<div class="rotation-page">
+    <div class="top-bar">
+        <h1>Rotation Builder</h1>
+        <p>@message</p>
 
-<p>@message</p>
-
-@if (currentResult.Warnings.Count > 0)
-{
-    <div style="border:1px solid red; padding:10px; margin:10px 0;">
-        <strong>Rotation Warnings</strong>
-
-        @foreach (var warning in currentResult.Warnings)
-        {
-            <div>@warning</div>
-        }
-    </div>
-}
-
-@if (nextShiftWarnings.Count > 0)
-{
-    <div style="border:1px solid orange; padding:10px; margin:10px 0;">
-        <strong>Next Shift Warnings</strong>
-
-        @foreach (var warning in nextShiftWarnings)
-        {
-            <div>@warning</div>
-        }
-    </div>
-}
-
-<h3>Training Count</h3>
-<input type="number"
-       min="0"
-       value="@trainingCount"
-       @onchange="TrainingCountChanged" />
-
-@if (trainingCount > 0)
-{
-    <h4>Training Requests</h4>
-
-    @for (int i = 0; i < pageState.TrainingRequests.Count; i++)
-    {
-        int index = i;
-
-        <div style="border:1px solid #ccc; padding:8px; margin:6px 0;">
-            <strong>Training @(index + 1)</strong>
-
-            <div>
-                Person:
-                <select @bind="pageState.TrainingRequests[index].EmployeeId">
-                    <option value="">Any</option>
-                    @foreach (var employee in employees)
-                    {
-                        <option value="@employee.Id">@employee.Name</option>
-                    }
-                </select>
-            </div>
-
-            <div>
-                Ride:
-                <select @bind="pageState.TrainingRequests[index].RideId">
-                    <option value="">Any</option>
-                    @foreach (var ride in rides)
-                    {
-                        <option value="@ride.Id">@ride.Name</option>
-                    }
-                </select>
-            </div>
-        </div>
-    }
-}
-
-<h3>Breaker Count</h3>
-<input type="number" @bind="breakerCount" min="0" />
-
-<details open>
-    <summary><strong>Working Today</strong></summary>
-
-    @foreach (var employee in employees)
-    {
-        <label style="display:block;">
-            <input type="checkbox" @bind="pageState.SelectedEmployeeIds[employee.Id]" />
-            @employee.Name (@employee.Area)
-        </label>
-    }
-</details>
-
-<details>
-    <summary><strong>Can't Be Breaker</strong></summary>
-
-    @foreach (var employee in employees)
-    {
-        <label style="display:block;">
-            <input type="checkbox" @bind="pageState.CannotBeBreakerIds[employee.Id]" />
-            @employee.Name
-        </label>
-    }
-</details>
-
-<details open>
-    <summary><strong>Open Rides</strong></summary>
-
-    @foreach (var ride in rides)
-    {
-        <label style="display:block;">
-            <input type="checkbox" @bind="pageState.SelectedRideIds[ride.Id]" />
-            @ride.Name
-        </label>
-    }
-</details>
-
-<br />
-
-<button @onclick="GenerateRotation">Generate Rotation</button>
-<button @onclick="ResetRotation">Reset</button>
-
-@if (currentResult.Assignments.Count > 0)
-{
-    <h2>Generated Rotation</h2>
-
-    @foreach (var item in currentResult.Assignments)
-    {
-        <div style="border:1px solid #ccc; padding:10px; margin:8px 0;">
-            <strong>@item.Ride.Name</strong>
-            <br />
-            @item.Employee.Name
-
-            @if (item.IsTraining)
+        <div class="area-tabs">
+            @foreach (var area in areas)
             {
-                <span> (Training)</span>
+                <button class="tab-button @(selectedArea == area ? "active" : "")"
+                        @onclick="() => SelectArea(area)">
+                    @area
+                </button>
+            }
+        </div>
+
+        <div class="view-tabs">
+            <button class="tab-button @(selectedView == "setup" ? "active" : "")"
+                    @onclick='() => selectedView = "setup"'>
+                Setup
+            </button>
+
+            @if (currentResult.Assignments.Count > 0)
+            {
+                <button class="tab-button @(selectedView == "rotation" ? "active" : "")"
+                        @onclick='() => selectedView = "rotation"'>
+                    Rotation 1
+                </button>
+
+                @for (int i = 0; i < nextShifts.Count; i++)
+                {
+                    int shiftIndex = i;
+                    string viewName = $"shift-{shiftIndex}";
+
+                    <button class="tab-button @(selectedView == viewName ? "active" : "")"
+                            @onclick="() => selectedView = viewName">
+                        Shift @(shiftIndex + 2)
+                    </button>
+                }
+            }
+        </div>
+
+        <div class="action-row">
+            <button class="primary-button" @onclick="GenerateRotation">Generate Rotation</button>
+
+            @if (currentResult.Assignments.Count > 0)
+            {
+                <button class="primary-button" @onclick="GenerateNextShift">+ Next Shift</button>
+                <button class="secondary-button" @onclick="SaveRotation">Save Rotation</button>
+            }
+
+            <button class="danger-button" @onclick="ResetRotation">Reset</button>
+        </div>
+    </div>
+
+    @if (currentResult.Warnings.Count > 0)
+    {
+        <div class="warning-red">
+            <strong>Rotation Warnings</strong>
+
+            @foreach (var warning in currentResult.Warnings)
+            {
+                <div>@warning</div>
             }
         </div>
     }
 
-    @if (currentResult.Breakers.Count > 0)
+    @if (nextShiftWarnings.Count > 0)
     {
-        <h2>Breakers</h2>
+        <div class="warning-orange">
+            <strong>Next Shift Warnings</strong>
 
-        @for (int i = 0; i < currentResult.Breakers.Count; i++)
-        {
-            var breaker = currentResult.Breakers[i];
+            @foreach (var warning in nextShiftWarnings)
+            {
+                <div>@warning</div>
+            }
+        </div>
+    }
 
-            <div style="border:1px solid #aaa; padding:10px; margin:8px 0;">
-                <strong>Breaker @(i + 1): @breaker.Name</strong>
+    @if (selectedView == "setup")
+    {
+        <div class="layout">
+            <div>
+                <div class="panel">
+                    <h3>@selectedArea Employees Working Today</h3>
 
-                <div>
-                    Covers:
-                    @{
-                        var coverage = currentResult.BreakerCoverage.GetValueOrDefault(breaker.Id, new List<Ride>());
-                    }
+                    <div class="action-row">
+                        <button class="secondary-button" @onclick="SelectAllAreaEmployees">Select All</button>
+                        <button class="secondary-button" @onclick="ClearAreaEmployees">Clear</button>
+                    </div>
 
-                    @if (coverage.Count == 0)
+                    <div class="check-list">
+                        @foreach (var employee in AreaEmployees)
+                        {
+                            <label>
+                                <input type="checkbox" @bind="pageState.SelectedEmployeeIds[employee.Id]" />
+                                @employee.Name
+                            </label>
+                        }
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <h3>@selectedArea Open Rides</h3>
+
+                    <div class="action-row">
+                        <button class="secondary-button" @onclick="SelectAllAreaRides">Select All</button>
+                        <button class="secondary-button" @onclick="ClearAreaRides">Clear</button>
+                    </div>
+
+                    <div class="check-list">
+                        @foreach (var ride in AreaRides)
+                        {
+                            <label>
+                                <input type="checkbox" @bind="pageState.SelectedRideIds[ride.Id]" />
+                                @ride.Name
+                            </label>
+                        }
+                    </div>
+                </div>
+            </div>
+
+            <div>
+                <div class="panel">
+                    <h3>Breakers</h3>
+
+                    <div class="count-control">
+                        <button class="secondary-button" @onclick="DecreaseBreakers">-</button>
+                        <span class="count-number">@breakerCount</span>
+                        <button class="secondary-button" @onclick="IncreaseBreakers">+</button>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <h3>Can't Be Breaker</h3>
+
+                    <div class="check-list">
+                        @foreach (var employee in AreaEmployees)
+                        {
+                            <label>
+                                <input type="checkbox" @bind="pageState.CannotBeBreakerIds[employee.Id]" />
+                                @employee.Name
+                            </label>
+                        }
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <h3>Training Requests</h3>
+
+                    <button class="secondary-button" @onclick="AddTrainingRequest">+ Add Training</button>
+
+                    @for (int i = 0; i < pageState.TrainingRequests.Count; i++)
                     {
-                        <span>None</span>
-                    }
-                    else
-                    {
-                        <span>@string.Join(", ", coverage.Select(r => r.Name))</span>
+                        int index = i;
+
+                        <div class="rotation-card">
+                            <strong>Training @(index + 1)</strong>
+
+                            <div>
+                                Person:
+                                <select @bind="pageState.TrainingRequests[index].EmployeeId">
+                                    <option value="">Any</option>
+                                    @foreach (var employee in AreaEmployees)
+                                    {
+                                        <option value="@employee.Id">@employee.Name</option>
+                                    }
+                                </select>
+                            </div>
+
+                            <div>
+                                Ride:
+                                <select @bind="pageState.TrainingRequests[index].RideId">
+                                    <option value="">Any</option>
+                                    @foreach (var ride in AreaRides)
+                                    {
+                                        <option value="@ride.Id">@ride.Name</option>
+                                    }
+                                </select>
+                            </div>
+
+                            <br />
+                            <button class="danger-button" @onclick="() => RemoveTrainingRequest(index)">Remove</button>
+                        </div>
                     }
                 </div>
             </div>
-        }
+        </div>
     }
 
-    <button @onclick="SaveRotation">Save Rotation</button>
-
-    <h2>Next Shift Setup</h2>
-
-    <h3>Next Shift Training Count</h3>
-    <input type="number"
-           min="0"
-           value="@nextShiftTrainingCount"
-           @onchange="NextShiftTrainingCountChanged" />
-
-    @if (nextShiftTrainingCount > 0)
+    @if (selectedView == "rotation" && currentResult.Assignments.Count > 0)
     {
-        <h4>Next Shift Training Requests</h4>
+        <h2>Rotation 1 - @selectedArea</h2>
 
-        @for (int i = 0; i < pageState.NextShiftTrainingRequests.Count; i++)
+        @foreach (var item in OrderedCurrentAssignments)
         {
-            int index = i;
+            <div class="rotation-card">
+                <strong>@item.Ride.Name</strong>
+                <br />
+                @item.Employee.Name
 
-            <div style="border:1px solid #ccc; padding:8px; margin:6px 0;">
-                <strong>Next Shift Training @(index + 1)</strong>
-
-                <div>
-                    Person:
-                    <select @bind="pageState.NextShiftTrainingRequests[index].EmployeeId">
-                        <option value="">Any</option>
-                        @foreach (var employee in employees)
-                        {
-                            <option value="@employee.Id">@employee.Name</option>
-                        }
-                    </select>
-                </div>
-
-                <div>
-                    Ride:
-                    <select @bind="pageState.NextShiftTrainingRequests[index].RideId">
-                        <option value="">Any</option>
-                        @foreach (var ride in rides)
-                        {
-                            <option value="@ride.Id">@ride.Name</option>
-                        }
-                    </select>
-                </div>
+                @if (item.IsTraining)
+                {
+                    <span> (Training)</span>
+                }
             </div>
         }
+
+        @if (currentResult.Breakers.Count > 0)
+        {
+            <h2>Breakers</h2>
+
+            @for (int i = 0; i < currentResult.Breakers.Count; i++)
+            {
+                var breaker = currentResult.Breakers[i];
+
+                <div class="rotation-card">
+                    <strong>Breaker @(i + 1): @breaker.Name</strong>
+
+                    <div>
+                        Covers:
+                        @{
+                            var coverage = currentResult.BreakerCoverage.GetValueOrDefault(breaker.Id, new List<Ride>());
+                        }
+
+                        @if (coverage.Count == 0)
+                        {
+                            <span>None</span>
+                        }
+                        else
+                        {
+                            <span>@string.Join(", ", coverage.Select(r => r.Name))</span>
+                        }
+                    </div>
+                </div>
+            }
+        }
+
+        <div class="panel">
+            <h3>Next Shift Training Requests</h3>
+
+            <button class="secondary-button" @onclick="AddNextShiftTrainingRequest">+ Add Training</button>
+
+            @for (int i = 0; i < pageState.NextShiftTrainingRequests.Count; i++)
+            {
+                int index = i;
+
+                <div class="rotation-card">
+                    <strong>Next Shift Training @(index + 1)</strong>
+
+                    <div>
+                        Person:
+                        <select @bind="pageState.NextShiftTrainingRequests[index].EmployeeId">
+                            <option value="">Any</option>
+                            @foreach (var employee in AreaEmployees)
+                            {
+                                <option value="@employee.Id">@employee.Name</option>
+                            }
+                        </select>
+                    </div>
+
+                    <div>
+                        Ride:
+                        <select @bind="pageState.NextShiftTrainingRequests[index].RideId">
+                            <option value="">Any</option>
+                            @foreach (var ride in AreaRides)
+                            {
+                                <option value="@ride.Id">@ride.Name</option>
+                            }
+                        </select>
+                    </div>
+
+                    <br />
+                    <button class="danger-button" @onclick="() => RemoveNextShiftTrainingRequest(index)">Remove</button>
+                </div>
+            }
+        </div>
     }
-
-    <br />
-    <button @onclick="GenerateNextShift">Next Shift</button>
-}
-
-@if (nextShifts.Count > 0)
-{
-    <h2>Next Shifts</h2>
 
     @for (int i = 0; i < nextShifts.Count; i++)
     {
         int shiftIndex = i;
 
-        <div style="border:2px solid #666; padding:10px; margin:10px 0;">
-            <h3>Shift @(shiftIndex + 2)</h3>
+        if (selectedView == $"shift-{shiftIndex}")
+        {
+            <h2>Shift @(shiftIndex + 2)</h2>
 
-            <button @onclick="() => DeleteShift(shiftIndex)">Reset This Shift</button>
+            <button class="danger-button" @onclick="() => DeleteShift(shiftIndex)">Reset This Shift</button>
+
+            <br />
+            <br />
 
             @foreach (var move in nextShifts[shiftIndex])
             {
-                <div>
+                <div class="rotation-card">
                     @if (move.FromPosition.StartsWith("Breaker", StringComparison.OrdinalIgnoreCase))
                     {
                         <strong>Breaker: @move.EmployeeName</strong>
@@ -247,18 +313,17 @@
                         <strong>@move.EmployeeName</strong>
                     }
 
-                    :
-                    @move.FromPosition → @move.ToPosition
+                    <div>@move.FromPosition → @move.ToPosition</div>
 
                     @if (move.IsTraining)
                     {
-                        <span> (Training)</span>
+                        <span>Training</span>
                     }
                 </div>
             }
-        </div>
+        }
     }
-}
+</div>
 
 @code {
     private string message = "Select employees and rides.";
@@ -270,13 +335,56 @@
 
     private RotationGenerationResult currentResult = new();
 
-    private int trainingCount = 0;
     private int breakerCount = 0;
-    private int nextShiftTrainingCount = 0;
+
+    private string selectedArea = "Alpha";
+    private string selectedView = "setup";
+
+    private List<string> areas = new()
+    {
+        "Alpha",
+        "Bravo",
+        "Charlie",
+        "Delta"
+    };
+
+    private List<string> whiteboardRideOrder = new()
+    {
+        "FWL",
+        "FWP",
+        "SLL",
+        "SLP",
+        "SBL",
+        "SBP",
+        "RR",
+        "TOR",
+        "CAS",
+        "TL"
+    };
 
     private List<List<NextShiftMove>> nextShifts = new();
     private List<ShiftSnapshot> shiftSnapshots = new();
     private List<string> nextShiftWarnings = new();
+
+    private List<Employee> AreaEmployees =>
+        employees
+            .Where(e => AreaMatches(e.Area))
+            .OrderBy(e => e.Name)
+            .ToList();
+
+    private List<Ride> AreaRides =>
+        rides
+            .Where(r => AreaMatches(r.Area))
+            .OrderBy(r => GetRideDisplayOrder(r.Name))
+            .ThenBy(r => r.Name)
+            .ToList();
+
+    private List<RotationResultItem> OrderedCurrentAssignments =>
+        currentResult.Assignments
+            .Where(a => AreaMatches(a.Ride.Area))
+            .OrderBy(a => GetRideDisplayOrder(a.Ride.Name))
+            .ThenBy(a => a.Ride.Name)
+            .ToList();
 
     protected override async Task OnInitializedAsync()
     {
@@ -292,24 +400,83 @@
             .ToListAsync();
 
         pageState.Initialize(employees, rides);
-        SyncTrainingRequests();
     }
 
-    private void TrainingCountChanged(ChangeEventArgs e)
+    private void SelectArea(string area)
     {
-        trainingCount = int.Parse(e.Value?.ToString() ?? "0");
-        SyncTrainingRequests();
+        selectedArea = area;
+        selectedView = "setup";
+        ResetRotation();
     }
 
-    private void NextShiftTrainingCountChanged(ChangeEventArgs e)
+    private bool AreaMatches(string? area)
     {
-        nextShiftTrainingCount = int.Parse(e.Value?.ToString() ?? "0");
-        SyncTrainingRequests();
+        return string.Equals(area, selectedArea, StringComparison.OrdinalIgnoreCase);
     }
 
-    private void SyncTrainingRequests()
+    private int GetRideDisplayOrder(string rideName)
     {
-        pageState.SyncTrainingRequests(trainingCount, nextShiftTrainingCount);
+        int index = whiteboardRideOrder.FindIndex(r =>
+            r.Equals(rideName, StringComparison.OrdinalIgnoreCase));
+
+        return index == -1 ? 999 : index;
+    }
+
+    private void SelectAllAreaEmployees()
+    {
+        foreach (var employee in AreaEmployees)
+            pageState.SelectedEmployeeIds[employee.Id] = true;
+    }
+
+    private void ClearAreaEmployees()
+    {
+        foreach (var employee in AreaEmployees)
+            pageState.SelectedEmployeeIds[employee.Id] = false;
+    }
+
+    private void SelectAllAreaRides()
+    {
+        foreach (var ride in AreaRides)
+            pageState.SelectedRideIds[ride.Id] = true;
+    }
+
+    private void ClearAreaRides()
+    {
+        foreach (var ride in AreaRides)
+            pageState.SelectedRideIds[ride.Id] = false;
+    }
+
+    private void IncreaseBreakers()
+    {
+        breakerCount++;
+    }
+
+    private void DecreaseBreakers()
+    {
+        if (breakerCount > 0)
+            breakerCount--;
+    }
+
+    private void AddTrainingRequest()
+    {
+        pageState.TrainingRequests.Add(new TrainingRequest());
+    }
+
+    private void RemoveTrainingRequest(int index)
+    {
+        if (index >= 0 && index < pageState.TrainingRequests.Count)
+            pageState.TrainingRequests.RemoveAt(index);
+    }
+
+    private void AddNextShiftTrainingRequest()
+    {
+        pageState.NextShiftTrainingRequests.Add(new TrainingRequest());
+    }
+
+    private void RemoveNextShiftTrainingRequest(int index)
+    {
+        if (index >= 0 && index < pageState.NextShiftTrainingRequests.Count)
+            pageState.NextShiftTrainingRequests.RemoveAt(index);
     }
 
     private async Task GenerateRotation()
@@ -318,15 +485,27 @@
         nextShifts.Clear();
         shiftSnapshots.Clear();
 
-        SyncTrainingRequests();
+        var selectedEmployees = AreaEmployees
+            .Where(e => pageState.SelectedEmployeeIds.GetValueOrDefault(e.Id))
+            .ToList();
+
+        var selectedRides = AreaRides
+            .Where(r => pageState.SelectedRideIds.GetValueOrDefault(r.Id))
+            .ToList();
+
+        var cannotBeBreakerEmployeeIds = AreaEmployees
+            .Where(e => pageState.CannotBeBreakerIds.GetValueOrDefault(e.Id))
+            .Select(e => e.Id)
+            .ToList();
 
         currentResult = await RotationService.GenerateRotation(
-            pageState.GetSelectedEmployees(employees),
-            pageState.GetSelectedRides(rides),
+            selectedEmployees,
+            selectedRides,
             pageState.TrainingRequests,
             breakerCount,
-            pageState.GetCannotBeBreakerEmployeeIds());
+            cannotBeBreakerEmployeeIds);
 
+        selectedView = "rotation";
         message = $"Generated {currentResult.Assignments.Count} ride assignments and {currentResult.Breakers.Count} breakers.";
     }
 
@@ -342,6 +521,7 @@
         nextShifts.Clear();
         shiftSnapshots.Clear();
         nextShiftWarnings.Clear();
+        selectedView = "setup";
         message = "Rotation reset.";
     }
 
@@ -355,14 +535,17 @@
             return;
         }
 
-        SyncTrainingRequests();
+        var activeEmployeeIds = AreaEmployees
+            .Where(e => pageState.SelectedEmployeeIds.GetValueOrDefault(e.Id))
+            .Select(e => e.Id)
+            .ToHashSet();
 
         var result = NextShiftService.GenerateNextShift(
             currentResult,
             employees,
             rides,
             shiftSnapshots,
-            pageState.GetActiveEmployeeIds(),
+            activeEmployeeIds,
             pageState.NextShiftTrainingRequests);
 
         if (!result.Success)
@@ -380,6 +563,7 @@
         nextShifts.Add(result.Moves);
         shiftSnapshots.Add(result.Snapshot);
 
+        selectedView = $"shift-{nextShifts.Count - 1}";
         message = $"Generated Shift {nextShifts.Count + 1}.";
     }
 
@@ -397,6 +581,7 @@
             shiftSnapshots.RemoveRange(snapshotIndex, shiftSnapshots.Count - snapshotIndex);
         }
 
+        selectedView = nextShifts.Count > 0 ? $"shift-{Math.Min(index, nextShifts.Count - 1)}" : "rotation";
         message = $"Deleted Shift {index + 2}. Any later shifts were also removed.";
     }
 }
