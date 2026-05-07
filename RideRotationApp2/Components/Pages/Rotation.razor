@@ -12,8 +12,10 @@
 
 <div class="rotation-page">
     <div class="top-bar">
-        <h1>Rotation Builder</h1>
-        <p>@message</p>
+        <div class="compact-top-row">
+            <h1>Rotation Builder</h1>
+            <p>@message</p>
+        </div>
 
         <div class="area-tabs">
             @foreach (var area in areas)
@@ -203,46 +205,89 @@
     {
         <h2>Rotation 1 - @selectedArea</h2>
 
-        @foreach (var item in OrderedCurrentAssignments)
-        {
-            <div class="rotation-card">
-                <strong>@item.Ride.Name</strong>
-                <br />
-                @item.Employee.Name
-
-                @if (item.IsTraining)
-                {
-                    <span> (Training)</span>
-                }
-            </div>
-        }
-
-        @if (currentResult.Breakers.Count > 0)
-        {
-            <h2>Breakers</h2>
-
-            @for (int i = 0; i < currentResult.Breakers.Count; i++)
+        <div class="action-row">
+            @if (!isEditingRotation)
             {
-                var breaker = currentResult.Breakers[i];
+                <button class="secondary-button" @onclick="StartEditingRotation">Edit What Actually Happened</button>
+            }
+            else
+            {
+                <button class="primary-button" @onclick="SaveActualRotation">Save Actual Rotation</button>
+                <button class="secondary-button" @onclick="CancelEditingRotation">Cancel</button>
+            }
+        </div>
 
+        @if (!isEditingRotation)
+        {
+            @foreach (var item in OrderedCurrentAssignments)
+            {
                 <div class="rotation-card">
-                    <strong>Breaker @(i + 1): @breaker.Name</strong>
+                    <strong>@item.Ride.Name</strong>
+                    <br />
+                    @item.Employee.Name
+
+                    @if (item.IsTraining)
+                    {
+                        <span> (Training)</span>
+                    }
+                </div>
+            }
+
+            @if (currentResult.Breakers.Count > 0)
+            {
+                <h2>Breakers</h2>
+
+                @for (int i = 0; i < currentResult.Breakers.Count; i++)
+                {
+                    var breaker = currentResult.Breakers[i];
+
+                    <div class="rotation-card">
+                        <strong>Breaker @(i + 1): @breaker.Name</strong>
+
+                        <div>
+                            Covers:
+                            @{
+                                var coverage = currentResult.BreakerCoverage.GetValueOrDefault(breaker.Id, new List<Ride>());
+                            }
+
+                            @if (coverage.Count == 0)
+                            {
+                                <span>None</span>
+                            }
+                            else
+                            {
+                                <span>@string.Join(", ", coverage.Select(r => r.Name))</span>
+                            }
+                        </div>
+                    </div>
+                }
+            }
+        }
+        else
+        {
+            @foreach (var position in editableRotationPositions)
+            {
+                <div class="rotation-card">
+                    <strong>@position.PositionName</strong>
 
                     <div>
-                        Covers:
-                        @{
-                            var coverage = currentResult.BreakerCoverage.GetValueOrDefault(breaker.Id, new List<Ride>());
-                        }
-
-                        @if (coverage.Count == 0)
-                        {
-                            <span>None</span>
-                        }
-                        else
-                        {
-                            <span>@string.Join(", ", coverage.Select(r => r.Name))</span>
-                        }
+                        Employee:
+                        <select @bind="position.EmployeeId">
+                            <option value="">Unassigned</option>
+                            @foreach (var employee in ActiveEmployees)
+                            {
+                                <option value="@employee.Id">@employee.Name</option>
+                            }
+                        </select>
                     </div>
+
+                    @if (!IsBreakerPosition(position.PositionName))
+                    {
+                        <label style="display:block; margin-top:8px;">
+                            <input type="checkbox" @bind="position.IsTraining" />
+                            Training
+                        </label>
+                    }
                 </div>
             }
         }
@@ -340,6 +385,9 @@
     private string selectedArea = "Alpha";
     private string selectedView = "setup";
 
+    private bool isEditingRotation = false;
+    private List<EditableShiftPosition> editableRotationPositions = new();
+
     private List<string> areas = new()
     {
         "Alpha",
@@ -369,6 +417,12 @@
     private List<Employee> AreaEmployees =>
         employees
             .Where(e => AreaMatches(e.Area))
+            .OrderBy(e => e.Name)
+            .ToList();
+
+    private List<Employee> ActiveEmployees =>
+        employees
+            .Where(e => pageState.SelectedEmployeeIds.GetValueOrDefault(e.Id))
             .OrderBy(e => e.Name)
             .ToList();
 
@@ -484,6 +538,8 @@
         nextShiftWarnings.Clear();
         nextShifts.Clear();
         shiftSnapshots.Clear();
+        isEditingRotation = false;
+        editableRotationPositions.Clear();
 
         var selectedEmployees = AreaEmployees
             .Where(e => pageState.SelectedEmployeeIds.GetValueOrDefault(e.Id))
@@ -509,6 +565,131 @@
         message = $"Generated {currentResult.Assignments.Count} ride assignments and {currentResult.Breakers.Count} breakers.";
     }
 
+    private void StartEditingRotation()
+    {
+        editableRotationPositions = new List<EditableShiftPosition>();
+
+        foreach (var assignment in OrderedCurrentAssignments)
+        {
+            editableRotationPositions.Add(new EditableShiftPosition
+            {
+                PositionName = assignment.Ride.Name,
+                EmployeeId = assignment.Employee.Id,
+                IsTraining = assignment.IsTraining
+            });
+        }
+
+        for (int i = 0; i < currentResult.Breakers.Count; i++)
+        {
+            editableRotationPositions.Add(new EditableShiftPosition
+            {
+                PositionName = $"Breaker {i + 1}",
+                EmployeeId = currentResult.Breakers[i].Id,
+                IsTraining = false
+            });
+        }
+
+        isEditingRotation = true;
+        message = "Editing Rotation 1. Training edits will not change certifications.";
+    }
+
+    private void CancelEditingRotation()
+    {
+        editableRotationPositions.Clear();
+        isEditingRotation = false;
+        message = "Canceled rotation edits.";
+    }
+
+    private void SaveActualRotation()
+    {
+        foreach (var position in editableRotationPositions)
+        {
+            if (position.EmployeeId == null)
+                continue;
+
+            var employee = employees.FirstOrDefault(e => e.Id == position.EmployeeId);
+
+            if (employee == null)
+                continue;
+
+            if (IsBreakerPosition(position.PositionName))
+            {
+                int breakerIndex = GetBreakerIndex(position.PositionName);
+
+                if (breakerIndex >= 0 && breakerIndex < currentResult.Breakers.Count)
+                {
+                    currentResult.Breakers[breakerIndex] = employee;
+                }
+
+                continue;
+            }
+
+            var assignment = currentResult.Assignments.FirstOrDefault(a =>
+                a.Ride.Name.Equals(position.PositionName, StringComparison.OrdinalIgnoreCase));
+
+            if (assignment != null)
+            {
+                assignment.Employee = employee;
+                assignment.IsTraining = position.IsTraining;
+            }
+        }
+
+        var actualSnapshot = BuildSnapshotFromEditablePositions();
+
+        if (shiftSnapshots.Count == 0)
+        {
+            shiftSnapshots.Add(actualSnapshot);
+        }
+        else
+        {
+            shiftSnapshots[0] = actualSnapshot;
+
+            if (shiftSnapshots.Count > 1)
+                shiftSnapshots.RemoveRange(1, shiftSnapshots.Count - 1);
+        }
+
+        nextShifts.Clear();
+        isEditingRotation = false;
+        selectedView = "rotation";
+        message = "Saved actual Rotation 1. Future shifts will build from these edits.";
+    }
+
+    private ShiftSnapshot BuildSnapshotFromEditablePositions()
+    {
+        var snapshot = new ShiftSnapshot();
+
+        foreach (var position in editableRotationPositions)
+        {
+            if (position.EmployeeId == null)
+                continue;
+
+            var employee = employees.FirstOrDefault(e => e.Id == position.EmployeeId);
+
+            if (employee == null)
+                continue;
+
+            snapshot.Positions[position.PositionName] = employee.Name;
+            snapshot.TrainingStatus[position.PositionName] = position.IsTraining;
+        }
+
+        return snapshot;
+    }
+
+    private bool IsBreakerPosition(string position)
+    {
+        return position.StartsWith("Breaker", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private int GetBreakerIndex(string position)
+    {
+        var numberText = position.Replace("Breaker", "", StringComparison.OrdinalIgnoreCase).Trim();
+
+        if (int.TryParse(numberText, out int breakerNumber))
+            return breakerNumber - 1;
+
+        return -1;
+    }
+
     private async Task SaveRotation()
     {
         await RotationService.SaveRotation(currentResult.Assignments);
@@ -521,6 +702,8 @@
         nextShifts.Clear();
         shiftSnapshots.Clear();
         nextShiftWarnings.Clear();
+        editableRotationPositions.Clear();
+        isEditingRotation = false;
         selectedView = "setup";
         message = "Rotation reset.";
     }
@@ -535,8 +718,7 @@
             return;
         }
 
-        var activeEmployeeIds = AreaEmployees
-            .Where(e => pageState.SelectedEmployeeIds.GetValueOrDefault(e.Id))
+        var activeEmployeeIds = ActiveEmployees
             .Select(e => e.Id)
             .ToHashSet();
 
