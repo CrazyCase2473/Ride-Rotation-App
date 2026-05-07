@@ -48,7 +48,7 @@
 {
     <h4>Training Requests</h4>
 
-    @for (int i = 0; i < trainingRequests.Count; i++)
+    @for (int i = 0; i < pageState.TrainingRequests.Count; i++)
     {
         int index = i;
 
@@ -57,7 +57,7 @@
 
             <div>
                 Person:
-                <select @bind="trainingRequests[index].EmployeeId">
+                <select @bind="pageState.TrainingRequests[index].EmployeeId">
                     <option value="">Any</option>
                     @foreach (var employee in employees)
                     {
@@ -68,7 +68,7 @@
 
             <div>
                 Ride:
-                <select @bind="trainingRequests[index].RideId">
+                <select @bind="pageState.TrainingRequests[index].RideId">
                     <option value="">Any</option>
                     @foreach (var ride in rides)
                     {
@@ -89,7 +89,7 @@
     @foreach (var employee in employees)
     {
         <label style="display:block;">
-            <input type="checkbox" @bind="selectedEmployeeIds[employee.Id]" />
+            <input type="checkbox" @bind="pageState.SelectedEmployeeIds[employee.Id]" />
             @employee.Name (@employee.Area)
         </label>
     }
@@ -101,7 +101,7 @@
     @foreach (var employee in employees)
     {
         <label style="display:block;">
-            <input type="checkbox" @bind="cannotBeBreakerIds[employee.Id]" />
+            <input type="checkbox" @bind="pageState.CannotBeBreakerIds[employee.Id]" />
             @employee.Name
         </label>
     }
@@ -113,7 +113,7 @@
     @foreach (var ride in rides)
     {
         <label style="display:block;">
-            <input type="checkbox" @bind="selectedRideIds[ride.Id]" />
+            <input type="checkbox" @bind="pageState.SelectedRideIds[ride.Id]" />
             @ride.Name
         </label>
     }
@@ -186,7 +186,7 @@
     {
         <h4>Next Shift Training Requests</h4>
 
-        @for (int i = 0; i < nextShiftTrainingRequests.Count; i++)
+        @for (int i = 0; i < pageState.NextShiftTrainingRequests.Count; i++)
         {
             int index = i;
 
@@ -195,7 +195,7 @@
 
                 <div>
                     Person:
-                    <select @bind="nextShiftTrainingRequests[index].EmployeeId">
+                    <select @bind="pageState.NextShiftTrainingRequests[index].EmployeeId">
                         <option value="">Any</option>
                         @foreach (var employee in employees)
                         {
@@ -206,7 +206,7 @@
 
                 <div>
                     Ride:
-                    <select @bind="nextShiftTrainingRequests[index].RideId">
+                    <select @bind="pageState.NextShiftTrainingRequests[index].RideId">
                         <option value="">Any</option>
                         @foreach (var ride in rides)
                         {
@@ -266,18 +266,13 @@
     private List<Employee> employees = new();
     private List<Ride> rides = new();
 
-    private Dictionary<int, bool> selectedEmployeeIds = new();
-    private Dictionary<int, bool> selectedRideIds = new();
-    private Dictionary<int, bool> cannotBeBreakerIds = new();
+    private RotationPageState pageState = new();
 
     private RotationGenerationResult currentResult = new();
 
     private int trainingCount = 0;
     private int breakerCount = 0;
     private int nextShiftTrainingCount = 0;
-
-    private List<TrainingRequest> trainingRequests = new();
-    private List<TrainingRequest> nextShiftTrainingRequests = new();
 
     private List<List<NextShiftMove>> nextShifts = new();
     private List<ShiftSnapshot> shiftSnapshots = new();
@@ -296,17 +291,7 @@
             .OrderBy(r => r.Name)
             .ToListAsync();
 
-        foreach (var employee in employees)
-        {
-            selectedEmployeeIds[employee.Id] = true;
-            cannotBeBreakerIds[employee.Id] = false;
-        }
-
-        foreach (var ride in rides)
-        {
-            selectedRideIds[ride.Id] = true;
-        }
-
+        pageState.Initialize(employees, rides);
         SyncTrainingRequests();
     }
 
@@ -324,17 +309,7 @@
 
     private void SyncTrainingRequests()
     {
-        while (trainingRequests.Count < trainingCount)
-            trainingRequests.Add(new TrainingRequest());
-
-        while (trainingRequests.Count > trainingCount)
-            trainingRequests.RemoveAt(trainingRequests.Count - 1);
-
-        while (nextShiftTrainingRequests.Count < nextShiftTrainingCount)
-            nextShiftTrainingRequests.Add(new TrainingRequest());
-
-        while (nextShiftTrainingRequests.Count > nextShiftTrainingCount)
-            nextShiftTrainingRequests.RemoveAt(nextShiftTrainingRequests.Count - 1);
+        pageState.SyncTrainingRequests(trainingCount, nextShiftTrainingCount);
     }
 
     private async Task GenerateRotation()
@@ -345,25 +320,12 @@
 
         SyncTrainingRequests();
 
-        var selectedEmployees = employees
-            .Where(e => selectedEmployeeIds.GetValueOrDefault(e.Id))
-            .ToList();
-
-        var selectedRides = rides
-            .Where(r => selectedRideIds.GetValueOrDefault(r.Id))
-            .ToList();
-
-        var cannotBeBreakerEmployeeIds = cannotBeBreakerIds
-            .Where(pair => pair.Value)
-            .Select(pair => pair.Key)
-            .ToList();
-
         currentResult = await RotationService.GenerateRotation(
-            selectedEmployees,
-            selectedRides,
-            trainingRequests,
+            pageState.GetSelectedEmployees(employees),
+            pageState.GetSelectedRides(rides),
+            pageState.TrainingRequests,
             breakerCount,
-            cannotBeBreakerEmployeeIds);
+            pageState.GetCannotBeBreakerEmployeeIds());
 
         message = $"Generated {currentResult.Assignments.Count} ride assignments and {currentResult.Breakers.Count} breakers.";
     }
@@ -395,18 +357,13 @@
 
         SyncTrainingRequests();
 
-        var activeEmployeeIds = selectedEmployeeIds
-            .Where(pair => pair.Value)
-            .Select(pair => pair.Key)
-            .ToHashSet();
-
         var result = NextShiftService.GenerateNextShift(
             currentResult,
             employees,
             rides,
             shiftSnapshots,
-            activeEmployeeIds,
-            nextShiftTrainingRequests);
+            pageState.GetActiveEmployeeIds(),
+            pageState.NextShiftTrainingRequests);
 
         if (!result.Success)
         {
@@ -426,295 +383,6 @@
         message = $"Generated Shift {nextShifts.Count + 1}.";
     }
 
-    private List<List<List<string>>> BuildPossibleAutomaticRotationLineSets(
-        List<string> ridePositions,
-        List<string> breakerPositions)
-    {
-        var lineSets = new List<List<List<string>>>();
-
-        if (ridePositions.Count == 0)
-            return lineSets;
-
-        if (breakerPositions.Count == 0)
-        {
-            lineSets.Add(new List<List<string>> { ridePositions.ToList() });
-            return lineSets;
-        }
-
-        if (breakerPositions.Count == 1)
-        {
-            lineSets.Add(new List<List<string>>
-            {
-                new List<string> { breakerPositions[0] }
-                    .Concat(ridePositions)
-                    .ToList()
-            });
-
-            return lineSets;
-        }
-
-        if (breakerPositions.Count == 2)
-        {
-            foreach (var firstGroup in GetRideGroupsNearTargetSize(ridePositions, 4))
-            {
-                var secondGroup = ridePositions
-                    .Where(r => !firstGroup.Contains(r))
-                    .ToList();
-
-                if (secondGroup.Count == 0)
-                    continue;
-
-                lineSets.Add(new List<List<string>>
-                {
-                    new List<string> { breakerPositions[0] }.Concat(firstGroup).ToList(),
-                    new List<string> { breakerPositions[1] }.Concat(secondGroup).ToList()
-                });
-
-                lineSets.Add(new List<List<string>>
-                {
-                    new List<string> { breakerPositions[0] }.Concat(secondGroup).ToList(),
-                    new List<string> { breakerPositions[1] }.Concat(firstGroup).ToList()
-                });
-            }
-
-            return lineSets;
-        }
-
-        var groups = new List<List<string>>();
-
-        for (int i = 0; i < breakerPositions.Count; i++)
-            groups.Add(new List<string> { breakerPositions[i] });
-
-        for (int i = 0; i < ridePositions.Count; i++)
-            groups[i % breakerPositions.Count].Add(ridePositions[i]);
-
-        lineSets.Add(groups);
-        return lineSets;
-    }
-
-    private List<List<string>> GetRideGroupsNearTargetSize(List<string> ridesToSplit, int targetSize)
-    {
-        var groups = new List<List<string>>();
-
-        int minSize = Math.Max(1, targetSize - 1);
-        int maxSize = Math.Min(ridesToSplit.Count - 1, targetSize + 1);
-
-        for (int size = minSize; size <= maxSize; size++)
-        {
-            BuildCombinations(ridesToSplit, size, 0, new List<string>(), groups);
-        }
-
-        return groups
-            .OrderBy(g => Math.Abs(g.Count - targetSize))
-            .ThenBy(g => string.Join(",", g))
-            .ToList();
-    }
-
-    private void BuildCombinations(
-        List<string> source,
-        int size,
-        int startIndex,
-        List<string> current,
-        List<List<string>> results)
-    {
-        if (current.Count == size)
-        {
-            results.Add(current.ToList());
-            return;
-        }
-
-        for (int i = startIndex; i < source.Count; i++)
-        {
-            current.Add(source[i]);
-            BuildCombinations(source, size, i + 1, current, results);
-            current.RemoveAt(current.Count - 1);
-        }
-    }
-
-    private bool TryBuildBestLineMoves(
-        List<string> linePositions,
-        ShiftSnapshot currentSnapshot,
-        ShiftSnapshot nextSnapshot,
-        List<NextShiftMove> allMoves,
-        List<TrainingRequest> availableTrainingRequests)
-    {
-        var positionsInLine = linePositions
-            .Where(p => currentSnapshot.Positions.ContainsKey(p))
-            .ToList();
-
-        if (positionsInLine.Count < 2)
-            return false;
-
-        var activeEmployeeIds = selectedEmployeeIds
-            .Where(pair => pair.Value)
-            .Select(pair => pair.Key)
-            .ToHashSet();
-
-        var possibleOrders = GetPositionPermutations(positionsInLine, maxResults: 5000);
-
-        foreach (var order in possibleOrders)
-        {
-            var testMoves = new List<NextShiftMove>();
-
-            var testSnapshot = new ShiftSnapshot
-            {
-                Positions = new Dictionary<string, string>(nextSnapshot.Positions),
-                TrainingStatus = new Dictionary<string, bool>(nextSnapshot.TrainingStatus)
-            };
-
-            var testAvailableRequests = availableTrainingRequests.ToList();
-
-            bool worked = true;
-
-            for (int i = 0; i < order.Count; i++)
-            {
-                string fromPosition = order[i];
-                string toPosition = order[(i + 1) % order.Count];
-
-                string employeeName = currentSnapshot.Positions[fromPosition];
-
-                var employee = employees.FirstOrDefault(e =>
-                    e.Name.Equals(employeeName, StringComparison.OrdinalIgnoreCase));
-
-                if (employee == null || !activeEmployeeIds.Contains(employee.Id))
-                {
-                    worked = false;
-                    break;
-                }
-
-                bool isTraining = false;
-
-                if (!CanMoveToPosition(employee, toPosition, testAvailableRequests, out isTraining, out var usedRequest))
-                {
-                    worked = false;
-                    break;
-                }
-
-                if (usedRequest != null)
-                    testAvailableRequests.Remove(usedRequest);
-
-                testMoves.Add(new NextShiftMove
-                {
-                    EmployeeName = employee.Name,
-                    FromPosition = fromPosition,
-                    ToPosition = toPosition,
-                    IsTraining = isTraining
-                });
-
-                testSnapshot.Positions[toPosition] = employee.Name;
-                testSnapshot.TrainingStatus[toPosition] = isTraining;
-            }
-
-            if (worked)
-            {
-                availableTrainingRequests.Clear();
-                availableTrainingRequests.AddRange(testAvailableRequests);
-
-                foreach (var move in testMoves)
-                    allMoves.Add(move);
-
-                foreach (var pair in testSnapshot.Positions)
-                    nextSnapshot.Positions[pair.Key] = pair.Value;
-
-                foreach (var pair in testSnapshot.TrainingStatus)
-                    nextSnapshot.TrainingStatus[pair.Key] = pair.Value;
-
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private List<List<string>> GetPositionPermutations(List<string> positions, int maxResults)
-    {
-        var results = new List<List<string>>();
-
-        void Backtrack(List<string> current, List<string> remaining)
-        {
-            if (results.Count >= maxResults)
-                return;
-
-            if (remaining.Count == 0)
-            {
-                results.Add(current.ToList());
-                return;
-            }
-
-            foreach (var position in remaining.ToList())
-            {
-                current.Add(position);
-
-                var nextRemaining = remaining
-                    .Where(p => p != position)
-                    .ToList();
-
-                Backtrack(current, nextRemaining);
-
-                current.RemoveAt(current.Count - 1);
-            }
-        }
-
-        Backtrack(new List<string>(), positions);
-
-        return results;
-    }
-
-    private bool CanMoveToPosition(
-        Employee employee,
-        string toPosition,
-        List<TrainingRequest> availableTrainingRequests,
-        out bool isTraining,
-        out TrainingRequest? usedTrainingRequest)
-    {
-        isTraining = false;
-        usedTrainingRequest = null;
-
-        if (IsBreakerPosition(toPosition))
-            return true;
-
-        var ride = FindRideByName(toPosition);
-
-        if (ride == null)
-            return false;
-
-        if (IsCertified(employee, ride))
-            return true;
-
-        var matchingRequest = availableTrainingRequests.FirstOrDefault(request =>
-            (request.EmployeeId == null || request.EmployeeId == employee.Id) &&
-            (request.RideId == null || request.RideId == ride.Id));
-
-        if (matchingRequest != null && CanTrainOnRide(employee, ride))
-        {
-            isTraining = true;
-            usedTrainingRequest = matchingRequest;
-            return true;
-        }
-
-        return false;
-    }
-
-    private ShiftSnapshot BuildSnapshotFromCurrentRotation()
-    {
-        var snapshot = new ShiftSnapshot();
-
-        foreach (var assignment in currentResult.Assignments)
-        {
-            snapshot.Positions[assignment.Ride.Name] = assignment.Employee.Name;
-            snapshot.TrainingStatus[assignment.Ride.Name] = assignment.IsTraining;
-        }
-
-        for (int i = 0; i < currentResult.Breakers.Count; i++)
-        {
-            string breakerPosition = $"Breaker {i + 1}";
-            snapshot.Positions[breakerPosition] = currentResult.Breakers[i].Name;
-            snapshot.TrainingStatus[breakerPosition] = false;
-        }
-
-        return snapshot;
-    }
-
     private void DeleteShift(int index)
     {
         if (index < 0 || index >= nextShifts.Count)
@@ -730,33 +398,5 @@
         }
 
         message = $"Deleted Shift {index + 2}. Any later shifts were also removed.";
-    }
-
-    private Ride? FindRideByName(string rideName)
-    {
-        return rides.FirstOrDefault(r =>
-            r.Name.Equals(rideName, StringComparison.OrdinalIgnoreCase));
-    }
-
-    private bool IsBreakerPosition(string position)
-    {
-        return position.StartsWith("Breaker", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private bool IsCertified(Employee employee, Ride ride)
-    {
-        return employee.Certifications.Any(cert =>
-            cert.RideId == ride.Id &&
-            cert.IsCertified);
-    }
-
-    private bool CanTrainOnRide(Employee employee, Ride ride)
-    {
-        if (ride.PrerequisiteRideId == null)
-            return true;
-
-        return employee.Certifications.Any(cert =>
-            cert.RideId == ride.PrerequisiteRideId &&
-            cert.IsCertified);
     }
 }
