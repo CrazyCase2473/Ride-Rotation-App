@@ -1,40 +1,74 @@
 # Ride Rotation App
 
-This is a web application to help team leads manage ride certifications, staffing, and daily ride rotations more efficiently.
+A web app that helps team leads manage ride certifications, staffing, and daily ride rotations.
 
-This project was started because of real operational challenges I had as a team lead at Frontier City and is designed to help staff employees fairly while ensuring all rides remain staffed properly.
+I started this project because of real problems I ran into as a team lead at Frontier City. It's built to rotate employees fairly while making sure every ride stays properly staffed.
 
-This Web Application is still in development
+> **Status:** still in development.
+
 ## Features
 
 ### Certification Management
-- Stores employee ride certifications
-- Edit certificatins through the UI
-- Add and remove employees
-- Add and remove rides
-- Filter employees by ride or area
+- Store which rides each employee is certified on
+- Edit certifications right from the certification grid
+- Add and remove employees and rides
+- Give employees a home area and rides an area
+- Filter employees by area or by ride
+- Set ride prerequisites (for example, an employee must know a loader position before learning a panel)
 
 ### Rotation Generation
-- Automatically generates ride rotations
-- Prevents employees from stay at the same ride repeatedly
-- Remembers recent ride placement
-- Supports breaker positions
-- Handle staffing requirements for open rides
-- Warns when a ride cannot be staffed
+- Automatically generate ride rotations for each area
+- Keep employees from landing on the same ride over and over by remembering recent placements
+- Assign breakers and show which rides each breaker covers
+- Mark employees who can't be breakers
+- Choose which employees and rides are active for the shift
+- Warn you when a ride can't be staffed
+
+### Next Shift Rotations
+- Build the next shift's rotation from the current one
+- Backtrack to find a valid arrangement when the first attempt doesn't work
+- See who moves where from one shift to the next
+- Look back at previous rotations
 
 ### Training Support
-- Assign training positions during rotation
-- Pioritizes training opportunities
-- Prevents invalid training combinations
+- Choose who to train and which ride to train them on
+- Training requests are filled first, before the rest of the rotation
+- Block training that doesn't make sense (already certified, or missing a prerequisite)
 
 ## Built With
- - C#
- - ASP.NET Core Blazor Server
- - Entity Framework Core
- - SQLite
- - Razor Components
+- C# / .NET 8
+- ASP.NET Core Blazor Server (Razor Components)
+- Entity Framework Core
+- SQLite
+
+## Getting Started
+
+### Prerequisites
+- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
+- The EF Core CLI tool: `dotnet tool install --global dotnet-ef`
+
+### Run it locally
+```bash
+git clone https://github.com/CrazyCase2473/Ride-Rotation-App.git
+cd Ride-Rotation-App/RideRotationApp2
+dotnet ef database update
+dotnet run
+```
+
+`dotnet ef database update` creates the SQLite database at `Data/ride_rotation.db`. The database is not checked into the repo.
+
+Then open the URL shown in the terminal (by default `http://localhost:5120`) and go to **Certifications** to add employees and rides, then **Rotation** to build a rotation.
+
+## Project Structure
+```
+RideRotationApp2/
+├── Components/Pages/   # Certifications and Rotation pages
+├── Data/               # EF Core database context
+├── Migrations/         # Database migrations
+├── Models/             # Employees, rides, certifications, rotations
+└── Services/           # Rotation, next shift, and certification logic
+```
 
 ## Future Plans
- - Drag and drop rotation editing
- - Multiple area support
- - Shift history tracking
+- Drag and drop rotation editing
+- Shift history tracking
